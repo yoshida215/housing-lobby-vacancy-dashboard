@@ -15,6 +15,13 @@
   el('room-name').textContent = `${room.p || '物件名なし'} ${room.r || '号室なし'}`;
   el('room-meta').textContent = `${room.a || '地区なし'} ／ ${room.m || '管理種別なし'} ／ ${room.s || '状態なし'}`;
   el('asana-link').href = `https://app.asana.com/0/1201255767385595/${encodeURIComponent(room.id)}`;
+  // 同じ物件・号室のタスクが【募集中】に複数ある場合は知らせる（登録先の取り違え防止）
+  const norm = v => String(v ?? '').normalize('NFKC').replace(/\s+/g, '');
+  const siblings = data.vacancies.filter(row => row.id !== room.id && row.p && norm(row.p) === norm(room.p) && norm(row.r) === norm(room.r));
+  if (siblings.length) {
+    el('sibling-note').hidden = false;
+    el('sibling-note').innerHTML = `この部屋にはAsanaのタスクが他にもあります。登録先を確認してください：${siblings.map(row => `<a href="room.html?id=${encodeURIComponent(row.id)}">${esc(row.s || '状態なし')}${row.c ? `・${esc(row.c)}` : ''}のタスク</a>`).join('、')}（このページは「${esc(room.s || '状態なし')}${room.c ? `・${esc(room.c)}` : ''}」のタスク）`;
+  }
   const propertyKey = String(room.p || '').normalize('NFKC').replace(/[\s・･.．\-‐‑–—－_（）()]+/g,'').toLowerCase();
   const propertyLocation = window.HOUSING_ADDRESSES?.properties[`${propertyKey}|${room.a || ''}`];
   el('room-address').textContent = propertyLocation?.address || '住所を確認中';

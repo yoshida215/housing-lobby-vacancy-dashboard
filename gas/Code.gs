@@ -437,7 +437,7 @@ function savePatrol_(body) {
     if (!dup) photos.forEach((p, i) => {
       const parent = targets.other || targets[''];
       if (!parent || !p || typeof p.data !== 'string' || p.data.length > 6000000) return;
-      asanaUpload_(parent, p.data, r.date + '_その他不備_' + (i + 1) + '.jpg');
+      asanaUpload_(parent, p.data, r.date + '_other_' + (i + 1) + '.jpg'); // 日本語名は添付で文字化けするため英字
       attached++;
     });
     updatePatrolIndex_(r.task, r.date);
