@@ -10,6 +10,8 @@
  *   EDIT_PASSCODE   巡回登録用の合言葉（必須）
  *   ADMIN_PASSCODE  管理戸数登録用の合言葉（必須）
  *   HISTORY_SHEET_ID 日次入居率を記録するスプレッドシートID（任意）
+ *   ASSIGNEE_NAGASAKI 長崎北・長崎中央・セキスイ・古里のサブタスク担当者（Asanaのメールアドレス）
+ *   ASSIGNEE_KENOU    諫早・大村のサブタスク担当者（Asanaのメールアドレス）
  */
 
 const CFG = {
@@ -48,6 +50,7 @@ const CFG = {
   ],
   keyTypeField: '1200977170310201', // 既存の「鍵種別」（選択肢の読み取り・初期表示のみ。書き込まない）
   maxPhotos: 15,
+  dueDays: 7, // サブタスクの期日＝作成日の1週間後
   patrolTaskName: date => '巡回確認（' + date + '）',   // 物件タスク直下のサブタスク（巡回記録の本体）
   otherTaskName: 'その他不備',                         // 写真があるとき巡回確認の中に作り、写真を添付する
   cacheSeconds: 600
@@ -335,6 +338,8 @@ function previewPatrol_(body) {
   const task = asanaGet_('/tasks/' + r.task, {opt_fields: 'name,memberships.project.gid,custom_fields.gid,custom_fields.display_value'});
   assertInProject_(task);
   const plan = planFollowUps_(r, task);
+  const who = assignmentFor_(task);
+  if (plan.parent || plan.create.length) plan.lines.push('作成するサブタスクの担当：' + (who.assignee || '未設定（' + who.reason + '）') + '／期日：' + who.due);
   return {ok: true, room: roomLabel_(task), text: patrolText_(r), actions: plan.lines};
 }
 
@@ -379,17 +384,40 @@ function planFollowUps_(r, task) {
 }
 
 // 実行し、写真の添付先（項目キー→タスクGID、null→巡回確認）を返す
-function applyFollowUps_(r, plan) {
+/* サブタスクの担当者と期日。地区・管理種別で振り分け、メールアドレスはスクリプトプロパティから読む */
+function assignmentFor_(task) {
+  const byId = {};
+  (task.custom_fields || []).forEach(f => { byId[f.gid] = f.display_value; });
+  const area = byId[CFG.fields.a] || '', kind = byId[CFG.fields.m] || '';
+  let key = null;
+  if (kind === 'セキスイ物件' || kind === '古里物件' || /古里/.test(area) || area === '長崎北' || area === '長崎中央') key = 'ASSIGNEE_NAGASAKI';
+  else if (area === '諫早' || area === '大村') key = 'ASSIGNEE_KENOU';
+  const email = key ? PropertiesService.getScriptProperties().getProperty(key) : null;
+  return {
+    assignee: email || null,
+    reason: key ? key + ' が未設定' : '地区「' + (area || '空欄') + '」は振り分け対象外',
+    due: addDays_(todayJst_(), CFG.dueDays)
+  };
+}
+
+function subtaskData_(name, notes, who) {
+  const data = {name: name, notes: notes, due_on: who.due};
+  if (who.assignee) data.assignee = who.assignee;
+  return {data: data};
+}
+
+function applyFollowUps_(r, plan, task) {
   const targets = Object.assign({}, plan.openByKey);
+  const who = assignmentFor_(task);
   if (plan.parent) {
-    const parent = asanaPost_('/tasks/' + r.task + '/subtasks', {data: {name: plan.parent, notes: patrolText_(r)}});
+    const parent = asanaPost_('/tasks/' + r.task + '/subtasks', subtaskData_(plan.parent, patrolText_(r), who));
     targets[''] = parent.gid;
     plan.create.forEach(c => {
       const x = CFG.patrolFields.find(f => f.key === c.key);
       const notes = x
         ? r.date + 'の巡回（担当：' + r.inspector + '）で「' + x.name + '：' + x.ng + '」を確認。\n対応後、次の巡回で「' + x.ok + '」を登録すると自動で完了になります。'
         : (r.otherIssue ? r.otherIssue + '\n\n' : '') + '―――\n' + r.date + 'の巡回（担当：' + r.inspector + '）で確認。' + (r.photoCount ? '写真' + r.photoCount + '枚を添付しています。' : '') + '\n対応後、このタスクを完了にしてください。';
-      const t = asanaPost_('/tasks/' + parent.gid + '/subtasks', {data: {name: c.name, notes: notes}});
+      const t = asanaPost_('/tasks/' + parent.gid + '/subtasks', subtaskData_(c.name, notes, who));
       targets[c.key] = t.gid;
     });
     if (!plan.create.length) asanaFetch_('put', '/tasks/' + parent.gid, null, {data: {completed: true}}); // 要対応なし＝巡回確認は完了
@@ -415,7 +443,7 @@ function savePatrol_(body) {
     // 同じ登録IDの巡回確認サブタスクがあれば作らない（二重送信対策）。項目・対応タスクも差分だけ反映
     const plan = planFollowUps_(r, task);
     const dup = Boolean(plan.existingParent);
-    const targets = applyFollowUps_(r, plan);
+    const targets = applyFollowUps_(r, plan, task);
     let attached = 0;
     if (!dup) photos.forEach((p, i) => {
       const parent = targets.other || targets[''];
