@@ -1,0 +1,9 @@
+.room-location{display:flex;justify-content:space-between;align-items:center;gap:24px;background:#fff;border:1px solid #d6e4ec;border-left:5px solid #267aa3;border-radius:14px;padding:22px 24px;margin-bottom:20px}
+.location-details{min-width:0}
+.location-details h2{font-size:.875rem;color:#536b7d;margin:0 0 7px}
+#room-address{font-size:1.125rem;font-weight:750;line-height:1.6;margin:0;overflow-wrap:anywhere}
+.location-help{font-size:.875rem;color:#617688;margin:6px 0 0}
+.route-button{display:inline-flex;justify-content:center;align-items:center;min-height:48px;padding:12px 18px;border-radius:9px;background:#1b5d85;color:#fff;font-size:1rem;font-weight:750;text-decoration:none;white-space:nowrap;flex-shrink:0}
+.route-button:hover{background:#174b6c}
+.route-button[hidden]{display:none}
+@media(max-width:700px){.room-location{align-items:stretch;flex-direction:column;gap:16px;padding:18px}.route-button{width:100%;white-space:normal;text-align:center}}
