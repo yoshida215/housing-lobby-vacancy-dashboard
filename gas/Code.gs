@@ -269,6 +269,7 @@ function parsePatrol_(story) {
     checks: checks,
     inspector: get('担当') || '',
     keyType: get('鍵種別') || '',
+    otherIssue: get('その他不備') || '',
     photoCount: photoMatch ? Number(photoMatch[1]) : 0,
     note: note,
     savedAt: story.created_at,
@@ -296,7 +297,9 @@ function validatePatrol_(body) {
   const keyType = String(body.keyType || '');
   if (keyType && !keyTypeOptions_().some(o => o.name === keyType)) throw new Error('鍵種別が正しくありません');
   const photoCount = Math.max(0, Math.min(CFG.maxPhotos, Number(body.photoCount) || 0));
-  return {task: body.task, date: body.date, clientId: body.clientId, inspector: inspector, note: note, checks: checks, keyType: keyType, photoCount: photoCount};
+  const otherIssue = String(body.otherIssue || '').trim();
+  if (otherIssue.length > 1000) throw new Error('その他不備のコメントは1000文字以内にしてください');
+  return {task: body.task, date: body.date, clientId: body.clientId, inspector: inspector, note: note, checks: checks, keyType: keyType, photoCount: photoCount, otherIssue: otherIssue};
 }
 
 // true/false/'na' ⇔ 選択肢の名前
@@ -322,6 +325,7 @@ function patrolText_(r) {
   const lines = [CFG.marker + r.date, '次回巡回予定：' + addDays_(r.date, CFG.intervalDays) + '（' + CFG.intervalDays + '日後）'];
   CFG.patrolFields.forEach(x => lines.push(x.name + '：' + labelOf_(x, r.checks[x.key])));
   if (r.keyType) lines.push('鍵種別：' + r.keyType);
+  if (r.otherIssue) lines.push('その他不備：' + r.otherIssue.replace(/\n/g, ' '));
   if (r.photoCount) lines.push('写真：' + r.photoCount + '枚');
   lines.push('担当：' + r.inspector);
   if (r.note) lines.push('メモ：' + r.note);
@@ -378,9 +382,9 @@ function planFollowUps_(r, task) {
       plan.lines.push('「' + x.task + '」を完了（' + open[0].from + '）');
     }
   });
-  if (r.photoCount && !mine) {
+  if ((r.photoCount || r.otherIssue) && !mine) {
     plan.create.push({key: 'other', name: CFG.otherTaskName});
-    plan.lines.push('　└ 「' + CFG.otherTaskName + '」を作成（写真' + r.photoCount + '枚を添付）');
+    plan.lines.push('　└ 「' + CFG.otherTaskName + '」を作成（' + [r.otherIssue ? 'コメントあり' : '', r.photoCount ? '写真' + r.photoCount + '枚を添付' : ''].filter(Boolean).join('・') + '）');
   }
   if (r.keyType && current[CFG.keyTypeField] !== r.keyType) {
     const opt = keyTypeOptions_().find(o => o.name === r.keyType);
@@ -401,7 +405,7 @@ function applyFollowUps_(r, plan) {
       const x = CFG.patrolFields.find(f => f.key === c.key);
       const notes = x
         ? r.date + 'の巡回（担当：' + r.inspector + '）で「' + x.name + '：' + x.ng + '」を確認。\n対応後、次の巡回で「' + x.ok + '」を登録すると自動で完了になります。'
-        : r.date + 'の巡回（担当：' + r.inspector + '）で撮影した不備の写真を添付しています。' + (r.note ? '\nメモ：' + r.note : '') + '\n対応後、このタスクを完了にしてください。';
+        : (r.otherIssue ? r.otherIssue + '\n\n' : '') + '―――\n' + r.date + 'の巡回（担当：' + r.inspector + '）で確認。' + (r.photoCount ? '写真' + r.photoCount + '枚を添付しています。' : '') + '\n対応後、このタスクを完了にしてください。';
       const t = asanaPost_('/tasks/' + parent.gid + '/subtasks', {data: {name: c.name, notes: notes}});
       targets[c.key] = t.gid;
     });

@@ -18,6 +18,7 @@
 .photo-thumbs{display:flex;flex-wrap:wrap;gap:6px}.photo-thumbs img{width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid #d6e4ec}
 .check-grid .photo-block{grid-column:1/-1;margin-top:-4px}
 .issue-list{white-space:normal;min-width:180px}
+.photo-block.general textarea{border:1px solid #cbd9e2;border-radius:8px;background:#fff;color:#152b3f;padding:10px 12px;font-size:.9rem;resize:vertical;width:100%}
 
 .check-grid .photo-block{flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px;border:0;background:transparent;padding:0 2px}
 .photo-button{display:inline-flex!important;flex-direction:row!important;align-items:center;gap:6px!important;border:1px solid #b9cbd7;border-radius:999px;background:#fff;color:#1b5d85!important;font-size:.8rem!important;font-weight:750!important;padding:6px 12px;cursor:pointer}.photo-button[hidden]{display:none!important}.photo-button input{display:none}

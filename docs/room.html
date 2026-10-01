@@ -37,7 +37,7 @@
             <p class="next-preview">登録後の次回巡回予定：<strong id="next-preview">—</strong>（45日後）</p>
             <label>鍵種別<select id="key-type"><option value="">（変更しない）</option></select></label>
             <fieldset class="check-grid" id="check-grid"><legend>現地確認（チェック＝問題なし／チェックなし＝対応タスクを作成）</legend></fieldset>
-            <div class="photo-block general"><label class="photo-button">📷 その他の写真を追加（不備があれば撮影 →「その他不備」タスクに添付）<input type="file" id="photo-general" accept="image/*" multiple></label><div class="photo-thumbs" id="thumbs-general"></div></div>
+            <div class="photo-block general"><span class="photo-label">その他不備（写真またはコメントがあると「その他不備」タスクを作成）</span><textarea id="other-issue" rows="3" maxlength="1000" placeholder="例：玄関ドアに傷、浴室の換気扇から異音 など"></textarea><label class="photo-button">📷 その他の写真を追加<input type="file" id="photo-general" accept="image/*" multiple></label><div class="photo-thumbs" id="thumbs-general"></div></div>
             <label>確認メモ<textarea id="visit-note" rows="4" maxlength="1000" placeholder="補充・撤去・次回確認事項など"></textarea></label>
             <div class="shared-only"><label>担当者名<input id="inspector" type="text" maxlength="30" autocomplete="name" placeholder="例：細田"></label></div>
             <div class="shared-only"><label>巡回登録の合言葉<input id="passcode" type="password" autocomplete="off"></label></div>

@@ -174,7 +174,7 @@
       : '<p class="empty">この部屋の詳細チェックはまだ登録されていません。</p>';
     el('history-body').innerHTML = filtered.length ? filtered.map(record => {
       const issues = issuesOf(record);
-      return `<tr><td>${esc(record.date)}</td><td>${esc(record.nextDate || store.addDays(record.date,45) || '—')}</td><td class="issue-list">${issues.length ? issues.map(x => `<span class="badge warn">${esc(x)}</span>`).join(' ') : record.checks ? '<span class="badge good">なし</span>' : '<span class="check-unknown">未記録</span>'}</td><td>${esc(record.keyType || '')}</td><td>${record.photoCount ? `${record.photoCount}枚` : ''}</td><td>${esc(record.inspector || '')}</td><td>${esc(record.note || '')}</td></tr>`;
+      return `<tr><td>${esc(record.date)}</td><td>${esc(record.nextDate || store.addDays(record.date,45) || '—')}</td><td class="issue-list">${issues.length ? issues.map(x => `<span class="badge warn">${esc(x)}</span>`).join(' ') : record.checks && !record.otherIssue ? '<span class="badge good">なし</span>' : record.checks ? '' : '<span class="check-unknown">未記録</span>'}${record.otherIssue ? ` <span class="badge warn">その他：${esc(record.otherIssue)}</span>` : ''}</td><td>${esc(record.keyType || '')}</td><td>${record.photoCount ? `${record.photoCount}枚` : ''}</td><td>${esc(record.inspector || '')}</td><td>${esc(record.note || '')}</td></tr>`;
     }).join('') : '<tr><td colspan="7" class="empty">条件に合う巡回履歴はありません</td></tr>';
     renderLocal();
   };
@@ -218,6 +218,7 @@
       checks,
       keyType: el('key-type').value,
       photoCount: photoList().length,
+      otherIssue: el('other-issue').value.trim(),
       note: el('visit-note').value.trim(),
       inspector: el('inspector').value.trim(),
       passcode: el('passcode').value
