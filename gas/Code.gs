@@ -45,7 +45,9 @@ const CFG = {
     {key: 'welcomeSet', name: 'ウェルカムセット', task: true},
     {key: 'staging', name: 'ステージング', task: false}
   ],
-  subtaskName: label => '【巡回】' + label + 'を設置',
+  patrolTaskName: date => '巡回確認（' + date + '）',   // 物件タスク直下のサブタスク（巡回記録の本体）
+  installTaskName: label => label + 'を設置',          // 巡回確認サブタスクの中に作る設置タスク
+  legacyInstallName: label => '【巡回】' + label + 'を設置',
   cacheSeconds: 600
 };
 
@@ -224,13 +226,18 @@ function setManagement_(body) {
 
 function getPatrols_(task) {
   if (!/^\d+$/.test(task || '')) throw new Error('部屋IDが正しくありません');
-  const stories = asanaList_('/tasks/' + task + '/stories', {opt_fields: 'text,type,created_at,created_by.name', limit: 100});
-  const records = stories
-    .filter(s => s.type === 'comment' && String(s.text || '').indexOf(CFG.marker) === 0)
-    .map(s => parsePatrol_(s))
-    .filter(Boolean)
+  // 正本：物件タスク直下の「巡回確認（日付）」サブタスクの説明欄。旧形式のコメントも読む
+  const subs = asanaList_('/tasks/' + task + '/subtasks', {opt_fields: 'name,notes,created_at,created_by.name', limit: 100})
+    .filter(t => /^巡回確認（/.test(t.name || '') && String(t.notes || '').indexOf(CFG.marker) === 0)
+    .map(t => ({text: t.notes, created_at: t.created_at, created_by: t.created_by}));
+  const stories = asanaList_('/tasks/' + task + '/stories', {opt_fields: 'text,type,created_at,created_by.name', limit: 100})
+    .filter(st => st.type === 'comment' && String(st.text || '').indexOf(CFG.marker) === 0);
+  const seen = {};
+  const records = subs.concat(stories)
+    .map(st => parsePatrol_(st))
+    .filter(rec => rec && !(rec.clientId && seen[rec.clientId]) && (seen[rec.clientId] = true))
     .sort((a, b) => b.date.localeCompare(a.date) || b.savedAt.localeCompare(a.savedAt));
-  if (records.length) updatePatrolIndex_(task, records[0].date); // 手入力コメントも索引へ反映
+  if (records.length) updatePatrolIndex_(task, records[0].date);
   return {task: task, records: records};
 }
 
@@ -301,31 +308,44 @@ function previewPatrol_(body) {
   return {ok: true, room: roomLabel_(task), text: patrolText_(r), actions: plan.lines};
 }
 
-/* 巡回結果に応じたAsana更新の計画：項目の値・設置サブタスクの作成／完了 */
+/* 巡回結果に応じたAsana更新の計画（dry-run と本実行で共通）
+   物件タスク └ 巡回確認（日付） └ ○○を設置  の2段構成 */
 function planFollowUps_(r, task) {
   const pf = readPatrolFields_();
-  const plan = {fields: {}, create: [], complete: [], lines: []};
-  if (!pf) return plan;
+  const plan = {fields: {}, parent: null, existingParent: null, create: [], complete: [], parentsToCheck: {}, lines: []};
+  const subs = asanaList_('/tasks/' + r.task + '/subtasks', {opt_fields: 'name,notes,completed', limit: 100});
+  const mine = subs.find(t => String(t.notes || '').indexOf('ID:' + r.clientId) >= 0);
+  if (mine) plan.existingParent = mine.gid;
+  else { plan.parent = CFG.patrolTaskName(r.date); plan.lines.push('サブタスク「' + plan.parent + '」を作成（巡回記録）'); }
+
+  // 未完了の設置タスク（過去の巡回確認の中、および旧形式の直下サブタスク）
+  const openInstalls = {};
+  subs.filter(t => /^巡回確認（/.test(t.name || '')).forEach(p => {
+    asanaList_('/tasks/' + p.gid + '/subtasks', {opt_fields: 'name,completed', limit: 100})
+      .filter(t => !t.completed).forEach(t => { (openInstalls[t.name] = openInstalls[t.name] || []).push({gid: t.gid, parent: p.gid, from: p.name}); });
+  });
+  subs.filter(t => !t.completed && /^【巡回】/.test(t.name || '')).forEach(t => {
+    const name = t.name.replace(/^【巡回】/, '');
+    (openInstalls[name] = openInstalls[name] || []).push({gid: t.gid, parent: null, from: '旧形式'});
+  });
+
   const current = {};
   (task.custom_fields || []).forEach(f => { current[f.gid] = f.display_value; });
-  const subtasks = asanaList_('/tasks/' + r.task + '/subtasks', {opt_fields: 'name,completed', limit: 100});
   CFG.patrolFields.forEach(x => {
-    const f = pf[x.key];
     const want = r.checks[x.key] ? 'あり' : 'なし';
-    if (current[f.gid] !== want) {
-      plan.fields[f.gid] = r.checks[x.key] ? f.yes : f.no;
+    if (pf && current[pf[x.key].gid] !== want) {
+      plan.fields[pf[x.key].gid] = r.checks[x.key] ? pf[x.key].yes : pf[x.key].no;
       plan.lines.push('項目「' + x.name + '」を「' + want + '」に更新');
     }
     if (!x.task) return;
-    const name = CFG.subtaskName(x.name);
-    const open = subtasks.filter(t => !t.completed && t.name === name);
-    if (!r.checks[x.key] && !open.length) {
-      plan.create.push(name);
-      plan.lines.push('サブタスク「' + name + '」を作成');
-    }
-    if (r.checks[x.key] && open.length) {
-      open.forEach(t => plan.complete.push(t.gid));
-      plan.lines.push('サブタスク「' + name + '」を完了');
+    const name = CFG.installTaskName(x.name);
+    const open = openInstalls[name] || [];
+    if (!r.checks[x.key]) {
+      if (open.length) plan.lines.push('「' + name + '」は未完了のタスクがあるため作成しない（' + open[0].from + '）');
+      else if (!mine) { plan.create.push(name); plan.lines.push('　└ 「' + name + '」を作成'); }
+    } else if (open.length) {
+      open.forEach(t => { plan.complete.push(t.gid); if (t.parent) plan.parentsToCheck[t.parent] = true; });
+      plan.lines.push('「' + name + '」を完了（' + open[0].from + '）');
     }
   });
   return plan;
@@ -333,11 +353,20 @@ function planFollowUps_(r, task) {
 
 function applyFollowUps_(r, plan) {
   if (Object.keys(plan.fields).length) asanaFetch_('put', '/tasks/' + r.task, null, {data: {custom_fields: plan.fields}});
-  plan.create.forEach(name => asanaPost_('/tasks/' + r.task + '/subtasks', {data: {
-    name: name,
-    notes: r.date + 'の巡回（担当：' + r.inspector + '）で「なし」を確認。\n設置後、次の巡回で「あり」を登録すると自動で完了になります。\n（空室業務ダッシュボードから作成）'
-  }}));
+  if (plan.parent) {
+    const parent = asanaPost_('/tasks/' + r.task + '/subtasks', {data: {name: plan.parent, notes: patrolText_(r)}});
+    plan.create.forEach(name => asanaPost_('/tasks/' + parent.gid + '/subtasks', {data: {
+      name: name,
+      notes: r.date + 'の巡回（担当：' + r.inspector + '）で「なし」を確認。\n設置後、次の巡回で「あり」を登録すると自動で完了になります。'
+    }}));
+    if (!plan.create.length) asanaFetch_('put', '/tasks/' + parent.gid, null, {data: {completed: true}}); // 不足なし＝巡回確認は完了
+  }
   plan.complete.forEach(gid => asanaFetch_('put', '/tasks/' + gid, null, {data: {completed: true}}));
+  // 中の設置タスクがすべて完了した巡回確認は完了にする
+  Object.keys(plan.parentsToCheck).forEach(gid => {
+    const rest = asanaList_('/tasks/' + gid + '/subtasks', {opt_fields: 'completed', limit: 100}).filter(t => !t.completed);
+    if (!rest.length) asanaFetch_('put', '/tasks/' + gid, null, {data: {completed: true}});
+  });
 }
 
 function savePatrol_(body) {
@@ -348,14 +377,11 @@ function savePatrol_(body) {
   try {
     const task = asanaGet_('/tasks/' + r.task, {opt_fields: 'name,memberships.project.gid,custom_fields.gid,custom_fields.display_value'});
     assertInProject_(task);
-    // 同じ登録IDのコメントがあれば再投稿しない（二重送信対策）
-    const stories = asanaList_('/tasks/' + r.task + '/stories', {opt_fields: 'text,type', limit: 100});
-    const dup = stories.some(s => s.type === 'comment' && String(s.text || '').indexOf('ID:' + r.clientId) >= 0);
-    if (!dup) asanaPost_('/tasks/' + r.task + '/stories', {data: {text: patrolText_(r)}});
-    updatePatrolIndex_(r.task, r.date);
-    // 項目・サブタスクは現状との差分だけ反映するので、再送しても二重にならない
+    // 同じ登録IDの巡回確認サブタスクがあれば作らない（二重送信対策）。項目・設置タスクも差分だけ反映
     const plan = planFollowUps_(r, task);
+    const dup = Boolean(plan.existingParent);
     applyFollowUps_(r, plan);
+    updatePatrolIndex_(r.task, r.date);
     CacheService.getScriptCache().remove('snapshot_n');
     return {ok: true, duplicate: dup, room: roomLabel_(task), nextDate: addDays_(r.date, CFG.intervalDays), actions: plan.lines};
   } finally {
