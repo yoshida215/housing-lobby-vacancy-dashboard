@@ -21,20 +21,13 @@
   // API未設定・通信失敗時は同梱スナップショットで表示する
   const fallbackSnapshot = () => {
     const s = window.HOUSING_SNAPSHOT;
-    const month = String(s.source?.sheet || '').match(/(\d{4})年(\d{1,2})月/);
-    const management = {};
-    if (month) management[`${month[1]}-${month[2].padStart(2, '0')}`] = {
-      areas: Object.fromEntries(s.management.map(x => [x.area, {sub: x.sub, general: x.general}])),
-      source: `${s.source.excel} ${s.source.sheet} ${s.source.column}`,
-      savedAt: s.source.downloaded
-    };
     const index = {};
     const store = window.PatrolStore;
     if (store) for (const id of Object.keys(store.all())) {
       const latest = store.latest(id);
       if (latest?.date) index[id] = {date: latest.date, nextDate: latest.nextDate || store.addDays(latest.date, 45), local: true};
     }
-    return {asOf: s.asOf, live: false, vacancies: s.vacancies, restorations: s.restorations, management, patrolIndex: index};
+    return {asOf: s.asOf, live: false, vacancies: s.vacancies, restorations: s.restorations, rates: {}, patrolIndex: index};
   };
   window.Api = {
     configured: Boolean(apiUrl),

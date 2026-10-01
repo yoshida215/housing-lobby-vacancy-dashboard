@@ -128,11 +128,55 @@ function buildSnapshot_() {
     live: true,
     vacancies: vacancies,
     restorations: restorations,
-    management: readManagement_()
+    rates: computeRates_(vacancies) // 管理戸数そのものは返さない（非公開）。率のみ返す
   };
 }
 
-/* ---------- 管理戸数（月ごと） ---------- */
+/* ---------- 管理戸数（月ごと・非公開） ---------- */
+
+function countVacancies_(vacancies) {
+  const counts = {};
+  CFG.areas.forEach(a => ['sub', 'general'].forEach(g => { counts[a + '|' + g] = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}; }));
+  vacancies.forEach(v => {
+    const g = v.m === 'サブ' ? 'sub' : (v.m === '一般管理' || v.m === 'セキスイ物件') ? 'general' : null;
+    if (!g || CFG.areas.indexOf(v.a) < 0) return;
+    const c = counts[v.a + '|' + g];
+    if (v.s === '空室中' && (v.c === '原状回復完了' || v.c === 'ステージング完了')) c[1]++;
+    else if (v.s === '空室中' && v.c === '工事掃除中') c[2]++;
+    else if (v.s === '入居中（退去予定）') c[3]++;
+    else if (v.s === '募集止め') c[4]++;
+    if (v.w === '14日免除') c[5]++;
+  });
+  return counts;
+}
+
+// 入居率＝1−(①＋②)÷管理戸数、評価入居率＝1−(①−⑤)÷管理戸数
+function rate_(c, den) {
+  return den ? {occ: 1 - (c[1] + c[2]) / den, ev: 1 - (c[1] - c[5]) / den} : null;
+}
+
+function computeRates_(vacancies) {
+  const counts = countVacancies_(vacancies);
+  const months = readManagement_();
+  const out = {};
+  Object.keys(months).forEach(month => {
+    const m = months[month];
+    const groups = {}, areas = {};
+    const all = {1: 0, 2: 0, 5: 0}; let allDen = 0;
+    CFG.areas.forEach(a => {
+      const ac = {1: 0, 2: 0, 5: 0}; let aDen = 0;
+      ['sub', 'general'].forEach(g => {
+        const c = counts[a + '|' + g], den = m.areas[a][g];
+        groups[a + '|' + g] = rate_(c, den);
+        [1, 2, 5].forEach(k => { ac[k] += c[k]; all[k] += c[k]; });
+        aDen += den; allDen += den;
+      });
+      areas[a] = rate_(ac, aDen);
+    });
+    out[month] = {source: m.source, savedAt: m.savedAt, groups: groups, areas: areas, total: rate_(all, allDen)};
+  });
+  return out;
+}
 
 function readManagement_() {
   const props = PropertiesService.getScriptProperties().getProperties();
@@ -160,7 +204,7 @@ function setManagement_(body) {
   const value = {areas: areas, source: String(body.source || '').slice(0, 120), savedAt: new Date().toISOString()};
   PropertiesService.getScriptProperties().setProperty('M_' + body.month, JSON.stringify(value));
   CacheService.getScriptCache().remove('snapshot');
-  return {ok: true, month: body.month, management: value};
+  return {ok: true, month: body.month};
 }
 
 /* ---------- 巡回記録 ---------- */
@@ -313,29 +357,18 @@ function recordDailyOccupancy() {
   const snap = getSnapshot_(true);
   const sheetId = PropertiesService.getScriptProperties().getProperty('HISTORY_SHEET_ID');
   if (!sheetId) return;
-  const month = todayJst_().slice(0, 7);
-  const m = snap.management[month];
+  const months = readManagement_();
+  const latest = Object.keys(months).sort().pop();
+  const m = latest ? months[latest] : null;
   const sheet = SpreadsheetApp.openById(sheetId).getSheets()[0];
-  if (sheet.getLastRow() === 0) sheet.appendRow(['日付', '地区', '種別', '管理戸数', '①原復済', '②原復未', '③退去予定', '④募集止め', '⑤14日免除', '入居率', '評価入居率']);
-  const counts = {};
-  snap.vacancies.forEach(v => {
-    const g = v.m === 'サブ' ? 'サブ' : (v.m === '一般管理' || v.m === 'セキスイ物件') ? '一般' : null;
-    if (!g || CFG.areas.indexOf(v.a) < 0) return;
-    const key = v.a + '|' + g;
-    const c = counts[key] = counts[key] || {1: 0, 2: 0, 3: 0, 4: 0, 5: 0};
-    if (v.s === '空室中' && (v.c === '原状回復完了' || v.c === 'ステージング完了')) c[1]++;
-    else if (v.s === '空室中' && v.c === '工事掃除中') c[2]++;
-    else if (v.s === '入居中（退去予定）') c[3]++;
-    else if (v.s === '募集止め') c[4]++;
-    if (v.w === '14日免除') c[5]++;
-  });
+  if (sheet.getLastRow() === 0) sheet.appendRow(['日付', '地区', '種別', '管理戸数', '管理戸数の月', '①原復済', '②原復未', '③退去予定', '④募集止め', '⑤14日免除', '入居率', '評価入居率']);
+  const counts = countVacancies_(snap.vacancies);
   const today = todayJst_();
-  CFG.areas.forEach(a => ['サブ', '一般'].forEach(g => {
-    const c = counts[a + '|' + g] || {1: 0, 2: 0, 3: 0, 4: 0, 5: 0};
-    const den = m ? m.areas[a][g === 'サブ' ? 'sub' : 'general'] : '';
-    const rate = den ? 1 - (c[1] + c[2]) / den : '';
-    const evalRate = den ? 1 - (c[1] - c[5]) / den : '';
-    sheet.appendRow([today, a, g, den, c[1], c[2], c[3], c[4], c[5], rate, evalRate]);
+  CFG.areas.forEach(a => ['sub', 'general'].forEach(g => {
+    const c = counts[a + '|' + g];
+    const den = m ? m.areas[a][g] : '';
+    const r = rate_(c, den);
+    sheet.appendRow([today, a, g === 'sub' ? 'サブ' : '一般', den, latest || '', c[1], c[2], c[3], c[4], c[5], r ? r.occ : '', r ? r.ev : '']);
   }));
 }
 

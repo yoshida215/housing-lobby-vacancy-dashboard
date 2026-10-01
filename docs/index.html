@@ -34,20 +34,20 @@
       <div class="section-heading"><div><p class="eyebrow">OPERATIONS OVERVIEW</p><h1 id="overview-title">空室業務の全体像</h1></div><p class="section-meta">Asana取得時点の空室情報</p></div>
       <div class="kpis" id="kpis"></div>
       <div class="dashboard-grid">
-        <section class="panel"><div class="panel-heading"><h2>エリア別 入居率</h2><span>当月管理戸数の確認待ち</span></div><div id="area-bars"></div></section>
+        <section class="panel"><div class="panel-heading"><h2>エリア別 入居率</h2><span>管理戸数は最新の全体会議資料</span></div><div id="area-bars"></div></section>
         <section class="panel"><div class="panel-heading"><h2>確認が必要なデータ</h2><span>集計対象の【募集中】</span></div><div id="exceptions"></div></section>
       </div>
-      <section class="panel"><div class="panel-heading"><h2>集計の内訳</h2><span>Asana件数は更新済み・管理戸数は当月確認待ち</span></div><div class="table-scroll"><table id="summary-table"><thead><tr><th>エリア・種別</th><th>管理戸数</th><th>①原復済</th><th>②原復未</th><th>③退去予定</th><th>④募集止め</th><th>⑤14日免除</th><th>入居率</th><th>評価入居率</th></tr></thead><tbody></tbody></table></div></section>
+      <section class="panel"><div class="panel-heading"><h2>集計の内訳</h2><span>管理戸数は非公開・率のみ表示</span></div><div class="table-scroll"><table id="summary-table"><thead><tr><th>エリア・種別</th><th>①原復済</th><th>②原復未</th><th>③退去予定</th><th>④募集止め</th><th>⑤14日免除</th><th>入居率</th><th>評価入居率</th></tr></thead><tbody></tbody></table></div></section>
     </section>
 
     <section class="view" id="view-occupancy" aria-labelledby="occupancy-title" hidden>
       <div class="section-heading"><div><p class="eyebrow">OCCUPANCY</p><h1 id="occupancy-title">入居率・空室一覧</h1></div><p class="section-meta">空室一覧「募集中」セクションの未完了タスク</p></div>
       <div class="filters"><label>エリア<select id="area-filter"><option value="all">全エリア</option><option>長崎中央</option><option>長崎北</option><option>諫早</option><option>大村</option></select></label><label>状態<select id="status-filter"><option value="all">すべて</option><option value="①">① 原復済</option><option value="②">② 原復未</option><option value="③">③ 退去予定</option><option value="④">④ 募集止め</option><option value="other">要確認</option></select></label><label class="search-field">物件名・号室<input id="search" type="search" placeholder="物件名や号室で検索"></label></div>
       <div class="panel"><div class="panel-heading"><h2>物件一覧</h2><span id="listing-count"></span></div><div class="table-scroll"><table class="list-table"><thead><tr><th>物件・号室</th><th>エリア</th><th>管理種別</th><th>区分</th><th>空室状況</th><th>Asana</th></tr></thead><tbody id="listing-body"></tbody></table></div></div>
-      <section class="panel" id="management-panel"><div class="panel-heading"><h2>管理戸数の登録（月ごと）</h2><span>入居率の分母。原本Excelの当月値を入力</span></div>
+      <section class="panel" id="management-panel"><div class="panel-heading"><h2>管理戸数の登録（月ごと）</h2><span>入居率の分母。全体会議資料「2.エリア別」の値</span></div>
         <form id="management-form" class="mgmt-form">
           <p class="location-help" id="management-base"></p>
-          <div class="filters"><label>対象月<input name="month" type="month" required></label><label class="search-field">出典<input name="source" type="text" maxlength="120" placeholder="例：☆入居率進捗表 週報（AI）☆.xlsx 10月タブ 1w"></label></div>
+          <div class="filters"><label>対象月<input name="month" type="month" required></label><label class="search-field">出典<input name="source" type="text" maxlength="120" placeholder="例：2026年10月度（9月実績）全体会議資料"></label></div>
           <div id="management-inputs" class="mgmt-grid"></div>
           <div class="filters"><label>管理用の合言葉<input name="passcode" type="password" required autocomplete="off"></label></div>
           <button type="submit" class="primary-button">管理戸数を登録</button><p id="management-message" role="status" class="save-message"></p>
@@ -70,7 +70,7 @@
       <div class="panel"><div class="panel-heading"><h2>部屋ごとの巡回管理</h2><span>次回予定は前回巡回日の45日後</span></div><div class="filters"><label>エリア<select id="patrol-area"><option value="all">全エリア</option><option>長崎中央</option><option>長崎北</option><option>諫早</option><option>大村</option></select></label><label>巡回状況<select id="patrol-status"><option value="all">すべて</option><option value="due">要巡回</option><option value="planned">予定日前</option></select></label><label class="search-field">物件名・号室<input id="patrol-search" type="search" placeholder="物件名や号室で検索"></label></div><div class="table-scroll"><table class="list-table"><thead><tr><th>物件・号室</th><th>エリア</th><th>前回巡回</th><th>次回予定</th><th>巡回状況</th><th>Asanaステージング</th></tr></thead><tbody id="patrol-body"></tbody></table></div></div>
     </section>
 
-    <footer>データ元：Asana【空室一覧】【14日ルール　原状回復工事業務】。管理戸数の原本はTeams「☆入居率進捗表 週報（AI）☆.xlsx」。巡回記録の正本はAsanaの各空室タスクのコメントです。</footer>
+    <footer>データ元：Asana【空室一覧】【14日ルール　原状回復工事業務】。管理戸数の正本はTeams「18全体月次会議」の全体会議資料（非公開）。巡回記録の正本はAsanaの各空室タスクのコメントです。</footer>
   </main>
 </body>
 </html>
