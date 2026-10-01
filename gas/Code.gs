@@ -49,6 +49,7 @@ const CFG = {
   keyTypeField: '1200977170310201', // 既存の「鍵種別」
   maxPhotos: 15,
   patrolTaskName: date => '巡回確認（' + date + '）',   // 物件タスク直下のサブタスク（巡回記録の本体）
+  otherTaskName: 'その他不備',                         // 写真があるとき巡回確認の中に作り、写真を添付する
   cacheSeconds: 600
 };
 
@@ -377,6 +378,10 @@ function planFollowUps_(r, task) {
       plan.lines.push('「' + x.task + '」を完了（' + open[0].from + '）');
     }
   });
+  if (r.photoCount && !mine) {
+    plan.create.push({key: 'other', name: CFG.otherTaskName});
+    plan.lines.push('　└ 「' + CFG.otherTaskName + '」を作成（写真' + r.photoCount + '枚を添付）');
+  }
   if (r.keyType && current[CFG.keyTypeField] !== r.keyType) {
     const opt = keyTypeOptions_().find(o => o.name === r.keyType);
     plan.fields[CFG.keyTypeField] = opt.gid;
@@ -394,10 +399,10 @@ function applyFollowUps_(r, plan) {
     targets[''] = parent.gid;
     plan.create.forEach(c => {
       const x = CFG.patrolFields.find(f => f.key === c.key);
-      const t = asanaPost_('/tasks/' + parent.gid + '/subtasks', {data: {
-        name: c.name,
-        notes: r.date + 'の巡回（担当：' + r.inspector + '）で「' + x.name + '：' + x.ng + '」を確認。\n対応後、次の巡回で「' + x.ok + '」を登録すると自動で完了になります。'
-      }});
+      const notes = x
+        ? r.date + 'の巡回（担当：' + r.inspector + '）で「' + x.name + '：' + x.ng + '」を確認。\n対応後、次の巡回で「' + x.ok + '」を登録すると自動で完了になります。'
+        : r.date + 'の巡回（担当：' + r.inspector + '）で撮影した不備の写真を添付しています。' + (r.note ? '\nメモ：' + r.note : '') + '\n対応後、このタスクを完了にしてください。';
+      const t = asanaPost_('/tasks/' + parent.gid + '/subtasks', {data: {name: c.name, notes: notes}});
       targets[c.key] = t.gid;
     });
     if (!plan.create.length) asanaFetch_('put', '/tasks/' + parent.gid, null, {data: {completed: true}}); // 要対応なし＝巡回確認は完了
@@ -426,11 +431,9 @@ function savePatrol_(body) {
     const targets = applyFollowUps_(r, plan);
     let attached = 0;
     if (!dup) photos.forEach((p, i) => {
-      const key = p && p.item && CFG.patrolFields.some(x => x.key === p.item) ? p.item : '';
-      const parent = targets[key] || targets[''];
+      const parent = targets.other || targets[''];
       if (!parent || !p || typeof p.data !== 'string' || p.data.length > 6000000) return;
-      const x = CFG.patrolFields.find(f => f.key === key);
-      asanaUpload_(parent, p.data, r.date + '_' + (x ? x.name : '巡回') + '_' + (i + 1) + '.jpg');
+      asanaUpload_(parent, p.data, r.date + '_その他不備_' + (i + 1) + '.jpg');
       attached++;
     });
     updatePatrolIndex_(r.task, r.date);

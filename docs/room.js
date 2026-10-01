@@ -54,8 +54,6 @@
     <label class="check-card" data-card="${item.key}"><input type="checkbox" name="${item.key}"><span class="check-mark" aria-hidden="true">✓</span><span>${esc(item.name)}</span><span class="check-sub">✓＝${esc(item.ok)}／なし＝${esc(item.ng)}${item.task ? `→「${esc(item.task)}」` : ''}</span></label>
     <div class="photo-block" data-extra="${item.key}" hidden>
       ${item.na ? `<label class="na-toggle"><input type="checkbox" name="${item.key}__na">${esc(item.na)}</label>` : ''}
-      <label class="photo-button" data-photo-label="${item.key}">📷 ${esc(item.name)}の写真を追加<input type="file" accept="image/*" multiple data-photo="${item.key}"></label>
-      <div class="photo-thumbs" id="thumbs-${item.key}"></div>
     </div>`).join(''));
   const form = el('room-form');
   const valueOf = item => item.na && form.elements[`${item.key}__na`].checked ? 'na' : Boolean(form.elements[item.key].checked);
@@ -66,10 +64,7 @@
   const refreshCards = () => items.forEach(item => {
     const v = valueOf(item);
     const extra = form.querySelector(`[data-extra="${item.key}"]`);
-    extra.hidden = !item.na && !(v === false && item.task);
-    const showPhotos = v === false && Boolean(item.task);
-    extra.querySelector(`[data-photo-label="${item.key}"]`).hidden = !showPhotos;
-    el(`thumbs-${item.key}`).hidden = !showPhotos;
+    extra.hidden = !item.na;
     form.querySelector(`[data-card="${item.key}"]`).classList.toggle('is-na', v === 'na');
     if (v === 'na') form.elements[item.key].checked = false;
   });
@@ -104,7 +99,7 @@
     img.src = url;
   });
   const renderThumbs = key => {
-    const box = el(key === 'general' ? 'thumbs-general' : `thumbs-${key}`);
+    const box = el('thumbs-general');
     box.innerHTML = (photos[key] || []).map((p, i) => `<img src="${p.dataUrl}" alt="写真${i + 1}" title="押すと削除" data-remove="${key}|${i}">`).join('');
   };
   const addPhotos = async (key, files) => {
@@ -115,7 +110,7 @@
     renderThumbs(key);
   };
   form.addEventListener('change', event => {
-    const key = event.target.dataset?.photo || (event.target.id === 'photo-general' ? 'general' : null);
+    const key = event.target.id === 'photo-general' ? 'general' : null;
     if (key && event.target.files?.length) { addPhotos(key, [...event.target.files]); event.target.value = ''; }
   });
   form.addEventListener('click', event => {
@@ -125,11 +120,8 @@
     photos[key].splice(Number(index), 1);
     renderThumbs(key);
   });
-  // 写真は「なし（不備）」の項目分と、その他だけ送る
-  const photoList = checks => [
-    ...items.filter(item => checks[item.key] === false).flatMap(item => (photos[item.key] || []).map(p => ({item: item.key, name: p.name, data: p.data}))),
-    ...(photos.general || []).map(p => ({item: null, name: p.name, data: p.data}))
-  ];
+  // 写真は「その他の写真」のみ。登録時に「その他不備」タスクを作って添付する
+  const photoList = () => (photos.general || []).map(p => ({name: p.name, data: p.data}));
 
   const today = store.today();
   const message = (text, error) => {el('save-message').textContent = text; el('save-message').classList.toggle('error', Boolean(error));};
@@ -225,7 +217,7 @@
       date: el('visit-date').value,
       checks,
       keyType: el('key-type').value,
-      photoCount: photoList(checks).length,
+      photoCount: photoList().length,
       note: el('visit-note').value.trim(),
       inspector: el('inspector').value.trim(),
       passcode: el('passcode').value
@@ -249,13 +241,7 @@
     message('確認内容を作成しています…');
     try {
       const preview = await api.previewPatrol(pending);
-      const list = photoList(body.checks);
-      const photoLine = list.length ? `\n\n▼ 写真（${list.length}枚）\n${[...new Set(list.map(p => p.item))].map(key => {
-        const n = list.filter(p => p.item === key).length;
-        const item = items.find(x => x.key === key);
-        return `・${item ? `「${item.task || item.name}」` : '「巡回確認」'}に${n}枚添付`;
-      }).join('\n')}` : '';
-      el('preview-text').textContent = preview.text + (preview.actions?.length ? `\n\n▼ あわせてAsanaで行う更新\n${preview.actions.map(line => `・${line}`).join('\n')}` : '') + photoLine;
+      el('preview-text').textContent = preview.text + (preview.actions?.length ? `\n\n▼ あわせてAsanaで行う更新\n${preview.actions.map(line => `・${line}`).join('\n')}` : '');
       showPreview(true);
       message('');
     } catch (err) {message(`確認できませんでした：${err.message}`, true);}
@@ -264,7 +250,7 @@
   el('confirm-button').addEventListener('click', async () => {
     if (!pending) return;
     el('confirm-button').disabled = true;
-    const list = photoList(pending.checks);
+    const list = photoList();
     message(list.length ? `Asanaに登録しています（写真${list.length}枚を送信中）…` : 'Asanaに登録しています…');
     try {
       const result = await api.savePatrol({...pending, photos: list});
