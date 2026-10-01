@@ -388,11 +388,10 @@ function planFollowUps_(r, task) {
 function assignmentFor_(task) {
   const byId = {};
   (task.custom_fields || []).forEach(f => { byId[f.gid] = f.display_value; });
-  const area = byId[CFG.fields.a] || '', kind = byId[CFG.fields.m] || '';
-  // セキスイ・古里は地区より優先。諫早・大村以外（地区が空欄を含む）は長崎担当
-  const kenou = (area === '諫早' || area === '大村') && kind !== 'セキスイ物件' && kind !== '古里物件';
-  const key = kenou ? 'ASSIGNEE_KENOU' : 'ASSIGNEE_NAGASAKI';
-  const email = PropertiesService.getScriptProperties().getProperty(key);
+  const area = byId[CFG.fields.a] || '';
+  // 地区が諫早・大村なら県央担当（管理種別は問わない）。それ以外（長崎北・長崎中央・古里・空欄など）は長崎担当
+  const key = (area === '諫早' || area === '大村') ? 'ASSIGNEE_KENOU' : 'ASSIGNEE_NAGASAKI';
+  const email = String(PropertiesService.getScriptProperties().getProperty(key) || '').trim();
   return {
     assignee: email || null,
     reason: key + ' が未設定',
