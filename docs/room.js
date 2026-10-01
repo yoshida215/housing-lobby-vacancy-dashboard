@@ -40,21 +40,23 @@
   el('key-type').innerHTML += keyOptions.map(name => `<option>${esc(name)}</option>`).join('');
   const nonElectronic = () => (window.NON_ELECTRONIC_KEYS || []).includes(el('key-type').value || room.k || '');
 
-  // Asanaの現地確認項目の値を初期表示にする。ステージングは未入力なら空室状況で補う
+  // 前回の巡回記録（巡回確認）の結果を初期表示にする。Asanaの項目（プロパティ）は使わない。ステージングは記録がなければ空室状況で補う
   const asanaStaging = room.c === 'ステージング完了';
-  const asanaChecks = room.f || {};
+  let lastChecks = {};
   const initialValue = item => {
-    const v = asanaChecks[item.key];
+    const v = lastChecks[item.key];
     if (v === true || v === false || v === 'na') return v;
     if (item.key === 'staging') return asanaStaging;
     if (item.key === 'keyBattery' && nonElectronic()) return 'na';
     return false;
   };
-  const knownCount = Object.values(asanaChecks).filter(v => v !== null && v !== undefined).length;
-  el('staging-source').textContent = (knownCount
-    ? 'Asanaの現地確認項目の値を初期表示にしています。現地で確認して変更してください。'
-    : 'Asanaの現地確認項目はまだ未入力です。現地で確認してチェックしてください。')
-    + (asanaChecks.staging == null && asanaStaging ? '（ステージングはAsanaの空室状況「ステージング完了」から仮チェック）' : '');
+  const showSource = () => {
+    const known = Object.values(lastChecks).some(v => v !== null && v !== undefined);
+    el('staging-source').textContent = (known
+      ? '前回の巡回記録の結果を初期表示にしています。現地で確認して変更してください。'
+      : 'この部屋の巡回記録はまだありません。現地で確認してチェックしてください。')
+      + (lastChecks.staging == null && asanaStaging ? '（ステージングはAsanaの空室状況「ステージング完了」から仮チェック）' : '');
+  };
 
   // 項目カード・該当なし・写真欄を生成
   el('check-grid').insertAdjacentHTML('beforeend', items.map(item => `
@@ -269,7 +271,7 @@
       showPreview(false);
       resetForm();
       message(`${result.duplicate ? '登録済みの記録でした' : 'Asanaに登録しました'}。次回巡回予定は${result.nextDate}です。${result.actions?.length ? `（${result.actions.join('／')}）` : ''}${result.photos ? `写真${result.photos}枚を添付しました。` : ''}`);
-      await loadRecords(); render();
+      await loadRecords(); lastChecks = records[0]?.checks || {}; showSource(); resetForm(); render();
     } catch (err) {
       message(`登録できませんでした：${err.message}（もう一度押しても二重登録にはなりません）`, true);
     } finally {
@@ -277,5 +279,8 @@
     }
   });
   await loadRecords();
+  lastChecks = records[0]?.checks || {};
+  showSource();
+  resetForm();
   render();
 })();
