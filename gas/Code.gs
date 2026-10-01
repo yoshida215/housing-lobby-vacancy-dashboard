@@ -389,13 +389,13 @@ function assignmentFor_(task) {
   const byId = {};
   (task.custom_fields || []).forEach(f => { byId[f.gid] = f.display_value; });
   const area = byId[CFG.fields.a] || '', kind = byId[CFG.fields.m] || '';
-  let key = null;
-  if (kind === 'セキスイ物件' || kind === '古里物件' || /古里/.test(area) || area === '長崎北' || area === '長崎中央') key = 'ASSIGNEE_NAGASAKI';
-  else if (area === '諫早' || area === '大村') key = 'ASSIGNEE_KENOU';
-  const email = key ? PropertiesService.getScriptProperties().getProperty(key) : null;
+  // セキスイ・古里は地区より優先。諫早・大村以外（地区が空欄を含む）は長崎担当
+  const kenou = (area === '諫早' || area === '大村') && kind !== 'セキスイ物件' && kind !== '古里物件';
+  const key = kenou ? 'ASSIGNEE_KENOU' : 'ASSIGNEE_NAGASAKI';
+  const email = PropertiesService.getScriptProperties().getProperty(key);
   return {
     assignee: email || null,
-    reason: key ? key + ' が未設定' : '地区「' + (area || '空欄') + '」は振り分け対象外',
+    reason: key + ' が未設定',
     due: addDays_(todayJst_(), CFG.dueDays)
   };
 }
