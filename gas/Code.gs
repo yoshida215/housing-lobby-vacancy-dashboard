@@ -37,6 +37,15 @@ const CFG = {
     ['welcomeSet', 'ウェルカムセット'],
     ['staging', 'ステージング']
   ],
+  // 【空室一覧】に追加する現地確認の項目（あり／なし）。task:true は「なし」のとき設置サブタスクを作る
+  patrolFields: [
+    {key: 'nobori', name: 'のぼり', task: true},
+    {key: 'recruitmentSign', name: '募集看板', task: true},
+    {key: 'managementSign', name: '管理看板', task: true},
+    {key: 'welcomeSet', name: 'ウェルカムセット', task: true},
+    {key: 'staging', name: 'ステージング', task: false}
+  ],
+  subtaskName: label => '【巡回】' + label + 'を設置',
   cacheSeconds: 600
 };
 
@@ -92,7 +101,7 @@ function getSnapshot_(refresh) {
 }
 
 function buildSnapshot_() {
-  const fieldIds = Object.values(CFG.fields);
+  const pf = readPatrolFields_();
   const optFields = 'name,completed,parent,custom_fields.gid,custom_fields.display_value';
   const rows = asanaList_('/sections/' + CFG.section + '/tasks', {opt_fields: optFields, limit: 100});
   const seen = {};
@@ -102,8 +111,12 @@ function buildSnapshot_() {
     seen[t.gid] = true;
     const row = {id: t.gid};
     const byId = {};
-    (t.custom_fields || []).forEach(f => { if (fieldIds.indexOf(f.gid) >= 0) byId[f.gid] = f.display_value; });
+    (t.custom_fields || []).forEach(f => { byId[f.gid] = f.display_value; });
     Object.keys(CFG.fields).forEach(k => { row[k] = byId[CFG.fields[k]] || null; });
+    if (pf) {
+      row.f = {};
+      CFG.patrolFields.forEach(x => { const v = pf[x.key] && byId[pf[x.key].gid]; row.f[x.key] = v === 'あり' ? true : v === 'なし' ? false : null; });
+    }
     vacancies.push(row);
   });
 
@@ -203,7 +216,7 @@ function setManagement_(body) {
   });
   const value = {areas: areas, source: String(body.source || '').slice(0, 120), savedAt: new Date().toISOString()};
   PropertiesService.getScriptProperties().setProperty('M_' + body.month, JSON.stringify(value));
-  CacheService.getScriptCache().remove('snapshot');
+  CacheService.getScriptCache().remove('snapshot_n');
   return {ok: true, month: body.month};
 }
 
@@ -278,13 +291,53 @@ function patrolText_(r) {
   return lines.join('\n');
 }
 
-// 送信前の確認用。Asanaには書き込まない。
+// 送信前の確認用（dry-run）。Asanaには書き込まない。
 function previewPatrol_(body) {
   if (!passOk_('EDIT_PASSCODE', body.passcode)) throw new Error('巡回登録用の合言葉が違います');
   const r = validatePatrol_(body);
   const task = asanaGet_('/tasks/' + r.task, {opt_fields: 'name,memberships.project.gid,custom_fields.gid,custom_fields.display_value'});
   assertInProject_(task);
-  return {ok: true, room: roomLabel_(task), text: patrolText_(r)};
+  const plan = planFollowUps_(r, task);
+  return {ok: true, room: roomLabel_(task), text: patrolText_(r), actions: plan.lines};
+}
+
+/* 巡回結果に応じたAsana更新の計画：項目の値・設置サブタスクの作成／完了 */
+function planFollowUps_(r, task) {
+  const pf = readPatrolFields_();
+  const plan = {fields: {}, create: [], complete: [], lines: []};
+  if (!pf) return plan;
+  const current = {};
+  (task.custom_fields || []).forEach(f => { current[f.gid] = f.display_value; });
+  const subtasks = asanaList_('/tasks/' + r.task + '/subtasks', {opt_fields: 'name,completed', limit: 100});
+  CFG.patrolFields.forEach(x => {
+    const f = pf[x.key];
+    const want = r.checks[x.key] ? 'あり' : 'なし';
+    if (current[f.gid] !== want) {
+      plan.fields[f.gid] = r.checks[x.key] ? f.yes : f.no;
+      plan.lines.push('項目「' + x.name + '」を「' + want + '」に更新');
+    }
+    if (!x.task) return;
+    const name = CFG.subtaskName(x.name);
+    const open = subtasks.filter(t => !t.completed && t.name === name);
+    if (!r.checks[x.key] && !open.length) {
+      plan.create.push(name);
+      plan.lines.push('サブタスク「' + name + '」を作成');
+    }
+    if (r.checks[x.key] && open.length) {
+      open.forEach(t => plan.complete.push(t.gid));
+      plan.lines.push('サブタスク「' + name + '」を完了');
+    }
+  });
+  return plan;
+}
+
+function applyFollowUps_(r, plan) {
+  if (Object.keys(plan.fields).length) asanaFetch_('put', '/tasks/' + r.task, null, {data: {custom_fields: plan.fields}});
+  plan.create.forEach(name => asanaPost_('/tasks/' + r.task + '/subtasks', {data: {
+    name: name,
+    notes: r.date + 'の巡回（担当：' + r.inspector + '）で「なし」を確認。\n設置後、次の巡回で「あり」を登録すると自動で完了になります。\n（空室業務ダッシュボードから作成）'
+  }}));
+  plan.complete.forEach(gid => asanaFetch_('put', '/tasks/' + gid, null, {data: {completed: true}}));
 }
 
 function savePatrol_(body) {
@@ -300,7 +353,11 @@ function savePatrol_(body) {
     const dup = stories.some(s => s.type === 'comment' && String(s.text || '').indexOf('ID:' + r.clientId) >= 0);
     if (!dup) asanaPost_('/tasks/' + r.task + '/stories', {data: {text: patrolText_(r)}});
     updatePatrolIndex_(r.task, r.date);
-    return {ok: true, duplicate: dup, room: roomLabel_(task), nextDate: addDays_(r.date, CFG.intervalDays)};
+    // 項目・サブタスクは現状との差分だけ反映するので、再送しても二重にならない
+    const plan = planFollowUps_(r, task);
+    applyFollowUps_(r, plan);
+    CacheService.getScriptCache().remove('snapshot_n');
+    return {ok: true, duplicate: dup, room: roomLabel_(task), nextDate: addDays_(r.date, CFG.intervalDays), actions: plan.lines};
   } finally {
     lock.releaseLock();
   }
@@ -315,6 +372,53 @@ function roomLabel_(task) {
   const byId = {};
   (task.custom_fields || []).forEach(f => { byId[f.gid] = f.display_value; });
   return [(byId[CFG.fields.p] || task.name || ''), (byId[CFG.fields.r] || '')].join(' ').trim();
+}
+
+/* ---------- 現地確認の項目（Asanaカスタムフィールド） ---------- */
+
+function readPatrolFields_() {
+  const v = PropertiesService.getScriptProperties().getProperty('PATROL_FIELDS');
+  return v ? JSON.parse(v) : null;
+}
+
+/** 手動実行用（確認のみ）：追加予定の項目をログに出す。Asanaは変更しない */
+function checkPatrolFields() {
+  Logger.log(planPatrolFields_().map(x => x.line).join('\n'));
+}
+
+/** 手動実行用：【空室一覧】に現地確認の項目（あり／なし）を追加する */
+function setupPatrolFields() {
+  const saved = {};
+  planPatrolFields_().forEach(x => {
+    let field = x.existing;
+    if (!field) {
+      field = asanaPost_('/custom_fields', {data: {
+        workspace: CFG.workspace, name: x.name, resource_subtype: 'enum',
+        enum_options: [{name: 'あり', color: 'green'}, {name: 'なし', color: 'red'}]
+      }});
+    }
+    if (!x.onProject) asanaPost_('/projects/' + CFG.project + '/addCustomFieldSetting', {data: {custom_field: field.gid, is_important: true}});
+    const opts = field.enum_options || asanaGet_('/custom_fields/' + field.gid, {opt_fields: 'enum_options.name,enum_options.gid'}).enum_options;
+    const yes = opts.find(o => o.name === 'あり'), no = opts.find(o => o.name === 'なし');
+    saved[x.key] = {gid: field.gid, yes: yes.gid, no: no.gid};
+    Logger.log(x.line + ' → 完了');
+  });
+  PropertiesService.getScriptProperties().setProperty('PATROL_FIELDS', JSON.stringify(saved));
+  CacheService.getScriptCache().remove('snapshot_n');
+}
+
+function planPatrolFields_() {
+  const project = asanaGet_('/projects/' + CFG.project, {opt_fields: 'custom_field_settings.custom_field.gid,custom_field_settings.custom_field.name'});
+  const onProject = {};
+  (project.custom_field_settings || []).forEach(s => { onProject[s.custom_field.name] = s.custom_field.gid; });
+  const all = asanaList_('/workspaces/' + CFG.workspace + '/custom_fields', {opt_fields: 'name,resource_subtype,enum_options.name,enum_options.gid', limit: 100});
+  return CFG.patrolFields.map(x => {
+    const same = all.filter(f => f.name === x.name);
+    const ok = same.find(f => f.resource_subtype === 'enum' && ['あり', 'なし'].every(n => (f.enum_options || []).some(o => o.name === n)));
+    if (same.length && !ok) throw new Error('「' + x.name + '」という別形式の項目が既にあります。名前を変えてください');
+    return {key: x.key, name: x.name, existing: ok || null, onProject: Boolean(onProject[x.name]),
+      line: '「' + x.name + '」（あり／なし）：' + (ok ? '既存の項目を使用' : '新規作成') + '・' + (onProject[x.name] ? '空室一覧に追加済み' : '空室一覧に追加')};
+  });
 }
 
 /* 巡回索引：タスクごとの最新巡回日（一覧表示用）。正本はAsanaコメント。 */

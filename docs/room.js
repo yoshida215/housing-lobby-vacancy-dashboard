@@ -27,9 +27,14 @@
     el('route-link').hidden = false;
   }
   const asanaStaging = room.c === 'ステージング完了';
-  el('staging-source').textContent = asanaStaging
-    ? 'Asanaの空室状況：「ステージング完了」。登録欄のステージングを仮チェックしています。現地で確認して変更できます。'
-    : `Asanaの空室状況：${room.c || '空欄'}。ステージングの有無はAsanaから確認できないため、現地で判断してください。`;
+  // Asanaの現地確認項目（のぼり等）に値があればそれを初期チェックにする。ステージングは未入力なら空室状況で補う
+  const asanaChecks = room.f || {};
+  const initialCheck = key => asanaChecks[key] === true || (key === 'staging' && asanaChecks.staging == null && asanaStaging);
+  const knownCount = Object.values(asanaChecks).filter(v => v !== null && v !== undefined).length;
+  el('staging-source').textContent = (knownCount
+    ? 'Asanaの現地確認項目の値を初期チェックにしています。現地で確認して変更してください。'
+    : 'Asanaの現地確認項目はまだ未入力です。現地で確認してチェックしてください。')
+    + (asanaChecks.staging == null ? (asanaStaging ? '（ステージングはAsanaの空室状況「ステージング完了」から仮チェック）' : '') : '');
   const labels = [
     ['nobori','のぼり'],
     ['recruitmentSign','募集看板'],
@@ -43,7 +48,7 @@
   const resetForm = () => {
     form.reset();
     el('visit-date').value = today;
-    form.elements.staging.checked = asanaStaging;
+    labels.forEach(([key]) => {form.elements[key].checked = initialCheck(key);});
     const pref = api.prefs.get();
     el('inspector').value = pref.inspector || '';
     el('passcode').value = pref.passcode || '';
@@ -95,7 +100,7 @@
     box.querySelectorAll('[data-local]').forEach(button => button.addEventListener('click', () => {
       const rec = local[Number(button.dataset.local)];
       el('visit-date').value = rec.date;
-      labels.forEach(([key]) => {form.elements[key].checked = rec.checks ? Boolean(rec.checks[key]) : (key === 'staging' && asanaStaging);});
+      labels.forEach(([key]) => {form.elements[key].checked = rec.checks ? Boolean(rec.checks[key]) : initialCheck(key);});
       el('visit-note').value = rec.note || '';
       loadedLocal = rec;
       updatePreview();
@@ -137,7 +142,7 @@
     message('確認内容を作成しています…');
     try {
       const preview = await api.previewPatrol(pending);
-      el('preview-text').textContent = preview.text;
+      el('preview-text').textContent = preview.text + (preview.actions?.length ? `\n\n▼ あわせてAsanaで行う更新\n${preview.actions.map(line => `・${line}`).join('\n')}` : '');
       showPreview(true);
       message('');
     } catch (err) {message(`確認できませんでした：${err.message}`, true);}
@@ -155,7 +160,7 @@
       pending = null;
       showPreview(false);
       resetForm();
-      message(`${result.duplicate ? '登録済みの記録でした' : 'Asanaに登録しました'}。次回巡回予定は${result.nextDate}です。`);
+      message(`${result.duplicate ? '登録済みの記録でした' : 'Asanaに登録しました'}。次回巡回予定は${result.nextDate}です。${result.actions?.length ? `（${result.actions.join('／')}）` : ''}`);
       await loadRecords(); render();
     } catch (err) {
       message(`登録できませんでした：${err.message}（もう一度押しても二重登録にはなりません）`, true);
