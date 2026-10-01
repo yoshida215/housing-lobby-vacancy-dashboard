@@ -3,6 +3,7 @@
   const api = window.Api;
   const store = window.PatrolStore;
   const shared = api.configured;
+  const items = window.PATROL_ITEMS;
   const el = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const id = new URLSearchParams(location.search).get('id');
@@ -26,36 +27,126 @@
     el('route-link').href = route.href;
     el('route-link').hidden = false;
   }
+
+  // 鍵種別（Asanaの既存項目）
+  const keyOptions = data.keyOptions?.length ? data.keyOptions : ['キーボックス','アンロック','オペロ','EDロック','ビットキー','ビットキー（EDロック）'];
+  el('key-type').innerHTML += keyOptions.map(name => `<option>${esc(name)}</option>`).join('');
+  const nonElectronic = () => (window.NON_ELECTRONIC_KEYS || []).includes(el('key-type').value || room.k || '');
+
+  // Asanaの現地確認項目の値を初期表示にする。ステージングは未入力なら空室状況で補う
   const asanaStaging = room.c === 'ステージング完了';
-  // Asanaの現地確認項目（のぼり等）に値があればそれを初期チェックにする。ステージングは未入力なら空室状況で補う
   const asanaChecks = room.f || {};
-  const initialCheck = key => asanaChecks[key] === true || (key === 'staging' && asanaChecks.staging == null && asanaStaging);
+  const initialValue = item => {
+    const v = asanaChecks[item.key];
+    if (v === true || v === false || v === 'na') return v;
+    if (item.key === 'staging') return asanaStaging;
+    if (item.key === 'keyBattery' && nonElectronic()) return 'na';
+    return false;
+  };
   const knownCount = Object.values(asanaChecks).filter(v => v !== null && v !== undefined).length;
   el('staging-source').textContent = (knownCount
-    ? 'Asanaの現地確認項目の値を初期チェックにしています。現地で確認して変更してください。'
+    ? 'Asanaの現地確認項目の値を初期表示にしています。現地で確認して変更してください。'
     : 'Asanaの現地確認項目はまだ未入力です。現地で確認してチェックしてください。')
-    + (asanaChecks.staging == null ? (asanaStaging ? '（ステージングはAsanaの空室状況「ステージング完了」から仮チェック）' : '') : '');
-  const labels = [
-    ['nobori','のぼり'],
-    ['recruitmentSign','募集看板'],
-    ['managementSign','管理看板'],
-    ['welcomeSet','ウェルカムセット'],
-    ['staging','ステージング']
-  ];
+    + (asanaChecks.staging == null && asanaStaging ? '（ステージングはAsanaの空室状況「ステージング完了」から仮チェック）' : '');
+
+  // 項目カード・該当なし・写真欄を生成
+  el('check-grid').insertAdjacentHTML('beforeend', items.map(item => `
+    <label class="check-card" data-card="${item.key}"><input type="checkbox" name="${item.key}"><span class="check-mark" aria-hidden="true">✓</span><span>${esc(item.name)}</span><span class="check-sub">✓＝${esc(item.ok)}／なし＝${esc(item.ng)}${item.task ? `→「${esc(item.task)}」` : ''}</span></label>
+    <div class="photo-block" data-extra="${item.key}" hidden>
+      ${item.na ? `<label class="na-toggle"><input type="checkbox" name="${item.key}__na">${esc(item.na)}</label>` : ''}
+      <label class="photo-button" data-photo-label="${item.key}">📷 ${esc(item.name)}の写真を追加<input type="file" accept="image/*" multiple data-photo="${item.key}"></label>
+      <div class="photo-thumbs" id="thumbs-${item.key}"></div>
+    </div>`).join(''));
   const form = el('room-form');
+  const valueOf = item => item.na && form.elements[`${item.key}__na`].checked ? 'na' : Boolean(form.elements[item.key].checked);
+  const setValue = (item, v) => {
+    form.elements[item.key].checked = v === true;
+    if (item.na) form.elements[`${item.key}__na`].checked = v === 'na';
+  };
+  const refreshCards = () => items.forEach(item => {
+    const v = valueOf(item);
+    const extra = form.querySelector(`[data-extra="${item.key}"]`);
+    extra.hidden = !item.na && !(v === false && item.task);
+    const showPhotos = v === false && Boolean(item.task);
+    extra.querySelector(`[data-photo-label="${item.key}"]`).hidden = !showPhotos;
+    el(`thumbs-${item.key}`).hidden = !showPhotos;
+    form.querySelector(`[data-card="${item.key}"]`).classList.toggle('is-na', v === 'na');
+    if (v === 'na') form.elements[item.key].checked = false;
+  });
+  form.addEventListener('change', event => {
+    const name = event.target.name || '';
+    if (name.endsWith('__na') && event.target.checked) form.elements[name.slice(0, -4)].checked = false;
+    const item = items.find(x => x.key === name);
+    if (item?.na && event.target.checked) form.elements[`${item.key}__na`].checked = false;
+    refreshCards();
+  });
+  el('key-type').addEventListener('change', () => {
+    const battery = items.find(x => x.key === 'keyBattery');
+    if (battery && nonElectronic()) setValue(battery, 'na');
+    refreshCards();
+  });
+
+  // 写真：端末で縮小（長辺1600px・JPEG）してから送る
+  const photos = {};
+  const shrink = file => new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+      resolve({dataUrl, data: dataUrl.split(',')[1]});
+    };
+    img.onerror = () => {URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした'));};
+    img.src = url;
+  });
+  const renderThumbs = key => {
+    const box = el(key === 'general' ? 'thumbs-general' : `thumbs-${key}`);
+    box.innerHTML = (photos[key] || []).map((p, i) => `<img src="${p.dataUrl}" alt="写真${i + 1}" title="押すと削除" data-remove="${key}|${i}">`).join('');
+  };
+  const addPhotos = async (key, files) => {
+    for (const file of files) {
+      try { photos[key] = [...(photos[key] || []), {...(await shrink(file)), name: file.name}]; }
+      catch (err) { message(err.message, true); }
+    }
+    renderThumbs(key);
+  };
+  form.addEventListener('change', event => {
+    const key = event.target.dataset?.photo || (event.target.id === 'photo-general' ? 'general' : null);
+    if (key && event.target.files?.length) { addPhotos(key, [...event.target.files]); event.target.value = ''; }
+  });
+  form.addEventListener('click', event => {
+    const target = event.target.dataset?.remove;
+    if (!target) return;
+    const [key, index] = target.split('|');
+    photos[key].splice(Number(index), 1);
+    renderThumbs(key);
+  });
+  // 写真は「なし（不備）」の項目分と、その他だけ送る
+  const photoList = checks => [
+    ...items.filter(item => checks[item.key] === false).flatMap(item => (photos[item.key] || []).map(p => ({item: item.key, name: p.name, data: p.data}))),
+    ...(photos.general || []).map(p => ({item: null, name: p.name, data: p.data}))
+  ];
+
   const today = store.today();
   const message = (text, error) => {el('save-message').textContent = text; el('save-message').classList.toggle('error', Boolean(error));};
+  const updatePreview = () => {el('next-preview').textContent = store.addDays(el('visit-date').value,45) || '—';};
   const resetForm = () => {
     form.reset();
     el('visit-date').value = today;
-    labels.forEach(([key]) => {form.elements[key].checked = initialCheck(key);});
+    el('key-type').value = keyOptions.includes(room.k) ? room.k : '';
+    items.forEach(item => setValue(item, initialValue(item)));
+    Object.keys(photos).forEach(key => {photos[key] = []; renderThumbs(key);});
     const pref = api.prefs.get();
     el('inspector').value = pref.inspector || '';
     el('passcode').value = pref.passcode || '';
     updatePreview();
+    refreshCards();
   };
   el('visit-date').max = today;
-  const updatePreview = () => {el('next-preview').textContent = store.addDays(el('visit-date').value,45) || '—';};
   el('visit-date').addEventListener('change',updatePreview);
   document.querySelectorAll('.shared-only').forEach(node => {node.hidden = !shared;});
   if (!shared) {
@@ -64,7 +155,12 @@
   }
   resetForm();
 
-  const mark = value => value === null || value === undefined ? '<span class="check-unknown">未記録</span>' : value ? '<span class="check-yes">✓ あり</span>' : '<span class="check-no">— なし</span>';
+  // 履歴・最新状態
+  el('history-check').innerHTML += '<option value="issues">要対応あり</option>' + items.map(item => `<option value="${item.key}">${esc(item.name)}：${esc(item.ng)}</option>`).join('');
+  const mark = (item, value) => value === null || value === undefined ? '<span class="check-unknown">未記録</span>'
+    : value === 'na' ? `<span class="check-unknown">${esc(item.na || '該当なし')}</span>`
+    : value ? `<span class="check-yes">✓ ${esc(item.ok)}</span>` : `<span class="check-no">— ${esc(item.ng)}</span>`;
+  const issuesOf = record => items.filter(item => record.checks?.[item.key] === false).map(item => `${item.name}：${item.ng}`);
   let records = [];
   const loadRecords = async () => {
     if (!shared) {records = store.forRoom(id); return;}
@@ -77,12 +173,17 @@
     el('last-patrol').textContent = latest?.date || '未登録';
     el('next-patrol').textContent = latest?.nextDate || '未設定';
     const from=el('history-from').value,to=el('history-to').value,check=el('history-check').value,query=el('history-query').value.trim().toLowerCase();
-    const filtered=records.filter(record => (!from||record.date>=from)&&(!to||record.date<=to)&&(check==='all'||record.checks?.[check]===true)&&(!query||`${record.note||''} ${record.inspector||''}`.toLowerCase().includes(query)));
+    const filtered=records.filter(record => (!from||record.date>=from)&&(!to||record.date<=to)
+      &&(check==='all'||(check==='issues'?issuesOf(record).length>0:record.checks?.[check]===false))
+      &&(!query||`${record.note||''} ${record.inspector||''}`.toLowerCase().includes(query)));
     el('history-count').textContent = `${filtered.length}件 / 全${records.length}件`;
     el('latest-checks').innerHTML = latest?.checks
-      ? labels.map(([key,label]) => `<div class="check-summary-row"><span>${label}</span>${mark(latest.checks[key])}</div>`).join('')
+      ? items.map(item => `<div class="check-summary-row"><span>${esc(item.name)}</span>${mark(item, latest.checks[item.key])}</div>`).join('') + (latest.keyType ? `<div class="check-summary-row"><span>鍵種別</span><span>${esc(latest.keyType)}</span></div>` : '')
       : '<p class="empty">この部屋の詳細チェックはまだ登録されていません。</p>';
-    el('history-body').innerHTML = filtered.length ? filtered.map(record => `<tr><td>${esc(record.date)}</td><td>${esc(record.nextDate || store.addDays(record.date,45) || '—')}</td>${labels.map(([key]) => `<td>${mark(record.checks?.[key])}</td>`).join('')}<td>${esc(record.inspector || '')}</td><td>${esc(record.note || '')}</td></tr>`).join('') : '<tr><td colspan="9" class="empty">条件に合う巡回履歴はありません</td></tr>';
+    el('history-body').innerHTML = filtered.length ? filtered.map(record => {
+      const issues = issuesOf(record);
+      return `<tr><td>${esc(record.date)}</td><td>${esc(record.nextDate || store.addDays(record.date,45) || '—')}</td><td class="issue-list">${issues.length ? issues.map(x => `<span class="badge warn">${esc(x)}</span>`).join(' ') : record.checks ? '<span class="badge good">なし</span>' : '<span class="check-unknown">未記録</span>'}</td><td>${esc(record.keyType || '')}</td><td>${record.photoCount ? `${record.photoCount}枚` : ''}</td><td>${esc(record.inspector || '')}</td><td>${esc(record.note || '')}</td></tr>`;
+    }).join('') : '<tr><td colspan="7" class="empty">条件に合う巡回履歴はありません</td></tr>';
     renderLocal();
   };
 
@@ -100,11 +201,12 @@
     box.querySelectorAll('[data-local]').forEach(button => button.addEventListener('click', () => {
       const rec = local[Number(button.dataset.local)];
       el('visit-date').value = rec.date;
-      labels.forEach(([key]) => {form.elements[key].checked = rec.checks ? Boolean(rec.checks[key]) : initialCheck(key);});
+      items.forEach(item => setValue(item, rec.checks && item.key in rec.checks ? Boolean(rec.checks[item.key]) : initialValue(item)));
       el('visit-note').value = rec.note || '';
       loadedLocal = rec;
       updatePreview();
-      message(rec.checks ? '旧記録を読み込みました。内容を確認して登録してください。' : '旧記録には5項目のチェックがありません。現地の記録に合わせてチェックしてから登録してください。');
+      refreshCards();
+      message('旧記録を読み込みました。追加された項目を現地の記録に合わせてチェックしてから登録してください。');
       form.scrollIntoView({behavior:'smooth',block:'start'});
     }));
   };
@@ -114,16 +216,21 @@
   const showPreview = visible => {
     el('preview').hidden = !visible;
     el('submit-button').hidden = visible;
-    form.querySelectorAll('input,textarea').forEach(input => {input.disabled = visible;});
+    form.querySelectorAll('input,textarea,select').forEach(input => {input.disabled = visible;});
   };
-  const collect = () => ({
-    task: id,
-    date: el('visit-date').value,
-    checks: Object.fromEntries(labels.map(([key]) => [key,Boolean(form.elements[key].checked)])),
-    note: el('visit-note').value.trim(),
-    inspector: el('inspector').value.trim(),
-    passcode: el('passcode').value
-  });
+  const collect = () => {
+    const checks = Object.fromEntries(items.map(item => [item.key, valueOf(item)]));
+    return {
+      task: id,
+      date: el('visit-date').value,
+      checks,
+      keyType: el('key-type').value,
+      photoCount: photoList(checks).length,
+      note: el('visit-note').value.trim(),
+      inspector: el('inspector').value.trim(),
+      passcode: el('passcode').value
+    };
+  };
   form.addEventListener('submit', async event => {
     event.preventDefault();
     const body = collect();
@@ -142,7 +249,13 @@
     message('確認内容を作成しています…');
     try {
       const preview = await api.previewPatrol(pending);
-      el('preview-text').textContent = preview.text + (preview.actions?.length ? `\n\n▼ あわせてAsanaで行う更新\n${preview.actions.map(line => `・${line}`).join('\n')}` : '');
+      const list = photoList(body.checks);
+      const photoLine = list.length ? `\n\n▼ 写真（${list.length}枚）\n${[...new Set(list.map(p => p.item))].map(key => {
+        const n = list.filter(p => p.item === key).length;
+        const item = items.find(x => x.key === key);
+        return `・${item ? `「${item.task || item.name}」` : '「巡回確認」'}に${n}枚添付`;
+      }).join('\n')}` : '';
+      el('preview-text').textContent = preview.text + (preview.actions?.length ? `\n\n▼ あわせてAsanaで行う更新\n${preview.actions.map(line => `・${line}`).join('\n')}` : '') + photoLine;
       showPreview(true);
       message('');
     } catch (err) {message(`確認できませんでした：${err.message}`, true);}
@@ -151,16 +264,17 @@
   el('confirm-button').addEventListener('click', async () => {
     if (!pending) return;
     el('confirm-button').disabled = true;
-    message('Asanaに登録しています…');
+    const list = photoList(pending.checks);
+    message(list.length ? `Asanaに登録しています（写真${list.length}枚を送信中）…` : 'Asanaに登録しています…');
     try {
-      const result = await api.savePatrol(pending);
+      const result = await api.savePatrol({...pending, photos: list});
       api.prefs.set({inspector: pending.inspector, passcode: pending.passcode});
       if (loadedLocal) api.prefs.set({migrated: [...(api.prefs.get().migrated || []), migratedKey(loadedLocal)]});
       loadedLocal = null;
       pending = null;
       showPreview(false);
       resetForm();
-      message(`${result.duplicate ? '登録済みの記録でした' : 'Asanaに登録しました'}。次回巡回予定は${result.nextDate}です。${result.actions?.length ? `（${result.actions.join('／')}）` : ''}`);
+      message(`${result.duplicate ? '登録済みの記録でした' : 'Asanaに登録しました'}。次回巡回予定は${result.nextDate}です。${result.actions?.length ? `（${result.actions.join('／')}）` : ''}${result.photos ? `写真${result.photos}枚を添付しました。` : ''}`);
       await loadRecords(); render();
     } catch (err) {
       message(`登録できませんでした：${err.message}（もう一度押しても二重登録にはなりません）`, true);

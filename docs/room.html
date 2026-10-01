@@ -13,6 +13,7 @@
   <script defer src="snapshot-current.js"></script>
   <script defer src="property-addresses.js"></script>
   <script defer src="patrol-store.js"></script>
+  <script defer src="patrol-items.js"></script>
   <script defer src="api.js"></script>
   <script defer src="room.js"></script>
 </head>
@@ -34,13 +35,9 @@
           <form id="room-form" class="patrol-form">
             <label>巡回日<input id="visit-date" type="date" required></label>
             <p class="next-preview">登録後の次回巡回予定：<strong id="next-preview">—</strong>（45日後）</p>
-            <fieldset class="check-grid"><legend>現地確認</legend>
-              <label class="check-card"><input type="checkbox" name="nobori"><span class="check-mark" aria-hidden="true">✓</span><span>のぼり</span></label>
-              <label class="check-card"><input type="checkbox" name="recruitmentSign"><span class="check-mark" aria-hidden="true">✓</span><span>募集看板</span></label>
-              <label class="check-card"><input type="checkbox" name="managementSign"><span class="check-mark" aria-hidden="true">✓</span><span>管理看板</span></label>
-              <label class="check-card"><input type="checkbox" name="welcomeSet"><span class="check-mark" aria-hidden="true">✓</span><span>ウェルカムセット</span></label>
-              <label class="check-card"><input type="checkbox" name="staging"><span class="check-mark" aria-hidden="true">✓</span><span>ステージング</span></label>
-            </fieldset>
+            <label>鍵種別<select id="key-type"><option value="">（変更しない）</option></select></label>
+            <fieldset class="check-grid" id="check-grid"><legend>現地確認（チェック＝問題なし／チェックなし＝対応タスクを作成）</legend></fieldset>
+            <div class="photo-block general"><label class="photo-button">📷 その他の写真を追加（任意・巡回確認に添付）<input type="file" id="photo-general" accept="image/*" multiple></label><div class="photo-thumbs" id="thumbs-general"></div></div>
             <label>確認メモ<textarea id="visit-note" rows="4" maxlength="1000" placeholder="補充・撤去・次回確認事項など"></textarea></label>
             <div class="shared-only"><label>担当者名<input id="inspector" type="text" maxlength="30" autocomplete="name" placeholder="例：細田"></label></div>
             <div class="shared-only"><label>巡回登録の合言葉<input id="passcode" type="password" autocomplete="off"></label></div>
@@ -51,7 +48,7 @@
         </section>
         <section class="panel"><div class="panel-heading"><h2>最新の確認状態</h2></div><div id="latest-checks" class="check-summary"></div><div id="local-records" class="local-records" hidden></div></section>
       </div>
-      <section class="panel"><div class="panel-heading"><h2>この部屋の巡回履歴</h2><span id="history-count"></span></div><div class="filters"><label>開始日<input id="history-from" type="date"></label><label>終了日<input id="history-to" type="date"></label><label>確認項目<select id="history-check"><option value="all">すべて</option><option value="nobori">のぼりあり</option><option value="recruitmentSign">募集看板あり</option><option value="managementSign">管理看板あり</option><option value="welcomeSet">ウェルカムセットあり</option><option value="staging">ステージングあり</option></select></label><label class="search-field">メモ検索<input id="history-query" type="search" placeholder="メモの語句で検索"></label></div><div class="table-scroll"><table class="list-table"><thead><tr><th>巡回日</th><th>次回予定</th><th>のぼり</th><th>募集看板</th><th>管理看板</th><th>ウェルカム</th><th>ステージング</th><th>担当</th><th>メモ</th></tr></thead><tbody id="history-body"></tbody></table></div></section>
+      <section class="panel"><div class="panel-heading"><h2>この部屋の巡回履歴</h2><span id="history-count"></span></div><div class="filters"><label>開始日<input id="history-from" type="date"></label><label>終了日<input id="history-to" type="date"></label><label>確認項目<select id="history-check"><option value="all">すべて</option></select></label><label class="search-field">メモ検索<input id="history-query" type="search" placeholder="メモの語句で検索"></label></div><div class="table-scroll"><table class="list-table"><thead><tr><th>巡回日</th><th>次回予定</th><th>要対応の項目</th><th>鍵種別</th><th>写真</th><th>担当</th><th>メモ</th></tr></thead><tbody id="history-body"></tbody></table></div></section>
       <p class="footnote">Asanaの「ステージング完了」は存在の根拠として表示します。Asanaに記載がない場合は「未確認」であり、「なし」とは判定しません。<span id="storage-note">巡回記録はAsanaの空室タスクにコメントとして保存され、全員に共有されます。</span></p>
     </div>
   </main>
