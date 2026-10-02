@@ -53,12 +53,13 @@
   const notices = [];
   if (data.error) notices.push(`最新データを取得できなかったため、${dateTime(data.asOf)}時点の固定データで表示しています（${data.error}）。`);
   else if (!data.live) notices.push(`${dateTime(data.asOf)}時点の固定データです。`);
-  else notices.push('Asanaの最新データを表示しています（最大10分前）。巡回記録はAsanaの各空室タスクにコメントとして蓄積されます。');
+  else notices.push('Asanaの最新データを表示しています（最大10分前）。巡回記録はAsanaの物件タスクの「巡回確認（日付）」サブタスクに蓄積されます。');
   if (!managementCurrent) notices.push('管理戸数が未登録のため、入居率・評価入居率は表示しません。');
   else if (rateMonth !== currentMonth) notices.push(`入居率の分母は最新の会議資料（${monthLabel(rateMonth)}実績）の管理戸数です。`);
   el('data-notice').textContent = notices.join(' ');
   const activateView = name => {
-    const selected = ['overview','occupancy','restoration','patrol'].includes(name) ? name : 'overview';
+    const selected = ['overview','occupancy','restoration','patrol','promotion'].includes(name) ? name : 'overview';
+    if (selected === 'promotion') window.dispatchEvent(new Event('promotion:show'));
     document.querySelectorAll('.tab').forEach(tab => {const active=tab.dataset.view===selected;tab.classList.toggle('active',active);if(active)tab.setAttribute('aria-current','page');else tab.removeAttribute('aria-current');});
     document.querySelectorAll('.view').forEach(view => {const active=view.id===`view-${selected}`;view.classList.toggle('active',active);view.hidden=!active;});
   };
@@ -111,7 +112,13 @@
     return `<tr><td>${esc(row.p||'物件名なし')} ${esc(String(row.r||'号室なし').trim())}</td><td>${dateTime(row.at)}</td><td>${outcome}</td><td>${esc(status||'—')}</td><td><a href="${sourceUrl(row.id)}" target="_blank" rel="noopener noreferrer">開く ↗</a></td></tr>`;
   }).join('');
 
-  const patrolRows = data.vacancies.filter(row => row.s==='空室中' && row.p && row.r).sort((a,b) => `${a.a}${a.p}${a.r}`.localeCompare(`${b.a}${b.p}${b.r}`,'ja'));
+  // 空室日数＝今日−解約日。長い順（解約日不明は最後）
+  const dayNum = d => Date.UTC(...d.split('-').map((v,i)=>i===1?Number(v)-1:Number(v)));
+  const vacancyDays = row => row.v ? Math.floor((dayNum(todayJst) - dayNum(row.v)) / 86400000) : null;
+  window.DASH = {data, vacancyDays, todayJst, roomUrl, esc, norm, badge, fmt};
+  const patrolRows = data.vacancies.filter(row => row.s==='空室中' && row.p && row.r)
+    .sort((a,b) => (vacancyDays(b) ?? -1e9) - (vacancyDays(a) ?? -1e9) || `${a.a}${a.p}${a.r}`.localeCompare(`${b.a}${b.p}${b.r}`,'ja'));
+  const daysCell = row => { const d = vacancyDays(row); return d === null ? '<span class="check-unknown">解約日不明</span>' : d < 0 ? badge('退去前','muted') : d >= 60 ? badge(`${d}日`,'warn') : `${d}日`; };
   const patrolIndex = data.patrolIndex || {};
   const latestPatrol = id => patrolIndex[id] || null;
   const renderPatrol = () => {
@@ -128,8 +135,8 @@
     el('patrol-body').innerHTML = visible.length ? visible.map(row => {
       const rec=latestPatrol(row.id),dueNow=!rec?.nextDate||rec.nextDate<=today;
       const asanaStage=row.c==='ステージング完了' ? badge('あり','good') : badge('未確認','muted');
-      return `<tr><td><a class="room-link" href="${roomUrl(row.id)}">${esc(row.p)} ${esc(row.r)}</a></td><td>${esc(row.a||'地区なし')}</td><td>${esc(rec?.date||'—')}</td><td>${esc(rec?.nextDate||'—')}</td><td>${dueNow?badge('要巡回','warn'):badge('予定前','good')}</td><td>${asanaStage}</td></tr>`;
-    }).join('') : '<tr><td colspan="6" class="empty">該当する部屋はありません</td></tr>';
+      return `<tr><td><a class="room-link" href="${roomUrl(row.id)}">${esc(row.p)} ${esc(row.r)}</a></td><td class="num">${daysCell(row)}</td><td>${esc(row.a||'地区なし')}</td><td>${esc(rec?.date||'—')}</td><td>${esc(rec?.nextDate||'—')}</td><td>${dueNow?badge('要巡回','warn'):badge('予定前','good')}</td><td>${asanaStage}</td></tr>`;
+    }).join('') : '<tr><td colspan="7" class="empty">該当する部屋はありません</td></tr>';
   };
   el('patrol-search').addEventListener('input',renderPatrol);
   el('patrol-area').addEventListener('change',renderPatrol);

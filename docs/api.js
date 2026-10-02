@@ -38,6 +38,11 @@
       catch (err) { const data = fallbackSnapshot(); data.error = err.message; return data; }
     },
     patrols: task => request({action: 'patrols', task}),
+    status: () => request({action: 'ping'}),
+    promotion: (month, refresh) => {
+      if (!apiUrl) return Promise.reject(new Error('共有データに接続していません'));
+      return request({action: 'promotion', month, ...(refresh ? {refresh: '1'} : {})});
+    },
     previewPatrol: body => request(null, {action: 'previewPatrol', ...body}),
     savePatrol: body => request(null, {action: 'savePatrol', ...body}),
     setManagement: body => request(null, {action: 'setManagement', ...body}),

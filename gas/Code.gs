@@ -3,15 +3,17 @@
  *
  * - 画面（GitHub Pages）からの読み取り・巡回登録を受け、Asanaへ中継する。
  * - Asanaトークンはスクリプトプロパティ ASANA_TOKEN にのみ保存する。画面側には渡さない。
- * - 巡回記録は【空室一覧】の該当タスクへ「【巡回記録】」コメントとして蓄積する。
+ * - 巡回記録は物件タスク直下のサブタスク「巡回確認（日付）」に蓄積する（運用ルール.md 参照）。
  *
  * スクリプトプロパティ：
  *   ASANA_TOKEN     Asana個人アクセストークン（必須）
- *   EDIT_PASSCODE   巡回登録用の合言葉（必須）
+ *   EDIT_PASSCODE   巡回登録用の合言葉（空欄なら合言葉なしで登録できる）
  *   ADMIN_PASSCODE  管理戸数登録用の合言葉（必須）
  *   HISTORY_SHEET_ID 日次入居率を記録するスプレッドシートID（任意）
  *   ASSIGNEE_NAGASAKI 長崎北・長崎中央・セキスイ・古里のサブタスク担当者（Asanaのメールアドレス）
  *   ASSIGNEE_KENOU    諫早・大村のサブタスク担当者（Asanaのメールアドレス）
+ *   ALERT_EMAIL       障害通知の送り先（任意）
+ *   MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET  管理戸数の自動取得用（Microsoft Entraのアプリ登録。任意）
  */
 
 const CFG = {
@@ -30,6 +32,19 @@ const CFG = {
     w: '1206967651739664'  // 評価入居率対象
   },
   areas: ['長崎中央', '長崎北', '諫早', '大村'],
+  moveOutField: '1201222607611150', // 解約日（テキスト）。空室日数の起点
+  applicationFields: {
+    date: '1204061090287264', broker: '1214016908312487', contract: '1214044050776097',
+    route: '1214044050776101', selfViewing: '1214044050776108'
+  },
+  selfViewing: {
+    project: '1201888167643147', // セルフ内見予約表（反響）
+    type: '1214044050776245', source: '1203496884706218', result: '1202105588703093', store: '1203505276357321'
+  },
+  meetingDocs: {
+    driveId: 'b!hr3BLeHR3kGhFBj-PRWaEAsQrCRVof5CtE5S4_fM07x9HrQe6ngeSYxlhRj_B_nL', // Teams 全社チーム
+    folder: '18全体月次会議／全員グループ　会議資料　全体会議　月1回'
+  },
   marker: '【巡回記録】',
   intervalDays: 45,
   // 現地確認の項目（docs/patrol-items.js と同じ内容に保つ）。Asanaの項目（プロパティ）とは連動しない
@@ -64,7 +79,8 @@ function doGet(e) {
     switch (p.action) {
       case 'snapshot': return json_(getSnapshot_(p.refresh === '1'));
       case 'patrols': return json_(getPatrols_(p.task));
-      case 'ping': return json_({ok: true, at: new Date().toISOString()});
+      case 'ping': return json_({ok: true, at: new Date().toISOString(), passcodeRequired: Boolean(PropertiesService.getScriptProperties().getProperty('EDIT_PASSCODE'))});
+      case 'promotion': return json_(getPromotion_(p.month, p.refresh === '1'));
       default: return json_({error: '不明な操作です'});
     }
   } catch (err) {
@@ -120,6 +136,7 @@ function buildSnapshot_() {
     (t.custom_fields || []).forEach(f => { byId[f.gid] = f.display_value; });
     Object.keys(CFG.fields).forEach(k => { row[k] = byId[CFG.fields[k]] || null; });
     row.k = byId[CFG.keyTypeField] || null;
+    row.v = parseJpDate_(byId[CFG.moveOutField]); // 解約日（YYYY-MM-DD）
     vacancies.push(row);
   });
 
@@ -528,6 +545,197 @@ function recordDailyOccupancy() {
   }));
 }
 
+/* ---------- 入居促進（月次の申込・反響） ---------- */
+/* 個人名は返さない。件数と内訳だけ。
+   申込：【空室一覧】の全タスク（未完了＋対象月以降に完了）のうち「申込日」が対象月のもの（ステータスは問わない・親タスクのみ）
+   反響：【セルフ内見予約表】のうち期日（反響受付日／内見日）が対象月のもの。2軸（物件ごと／人物名ごと）で数える */
+
+function getPromotion_(month, refresh) {
+  if (!/^\d{4}-\d{2}$/.test(month || '')) throw new Error('対象月が正しくありません');
+  const cache = CacheService.getScriptCache();
+  const key = 'promo_' + month;
+  if (!refresh) { const hit = cacheGet_(cache, key); if (hit) return JSON.parse(hit); }
+  const data = buildPromotion_(month);
+  const current = month >= todayJst_().slice(0, 7);
+  cachePut_(cache, key, JSON.stringify(data), current ? 1800 : 21600);
+  return data;
+}
+
+function monthRange_(month) {
+  const [y, m] = month.split('-').map(Number);
+  const end = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  return {start: month + '-01', end: end, sinceUtc: new Date(Date.UTC(y, m - 1, 1) - 9 * 3600 * 1000).toISOString()};
+}
+
+function tally_(list, fn) {
+  const out = {};
+  list.forEach(x => { const k = fn(x) || '未設定'; out[k] = (out[k] || 0) + 1; });
+  return out;
+}
+
+function buildPromotion_(month) {
+  const range = monthRange_(month);
+  const fieldOf = t => { const o = {}; (t.custom_fields || []).forEach(f => { o[f.gid] = f.display_value; }); return o; };
+  const optFields = 'name,completed,parent,due_on,created_at,custom_fields.gid,custom_fields.display_value';
+
+  // 申込
+  const af = CFG.applicationFields;
+  const seen = {};
+  const apps = asanaList_('/projects/' + CFG.project + '/tasks', {completed_since: range.sinceUtc, opt_fields: optFields, limit: 100})
+    .filter(t => !t.parent && !seen[t.gid] && (seen[t.gid] = true))
+    .map(t => ({t: t, f: fieldOf(t)}))
+    .filter(x => { const d = parseJpDate_(x.f[af.date]); return d && d >= range.start && d <= range.end && !['テンプレ', '除外'].includes(x.f[CFG.fields.s]); });
+  const application = {
+    total: apps.length,
+    byStatus: tally_(apps, x => x.f[CFG.fields.s]),
+    byArea: tally_(apps, x => x.f[CFG.fields.a]),
+    byKind: tally_(apps, x => x.f[CFG.fields.m]),
+    byBroker: tally_(apps, x => x.f[af.broker]),
+    byContract: tally_(apps, x => x.f[af.contract]),
+    byRoute: tally_(apps, x => x.f[af.route]),
+    bySelfViewing: tally_(apps, x => x.f[af.selfViewing])
+  };
+
+  // 反響（セルフ内見予約表）
+  const sv = CFG.selfViewing;
+  const seen2 = {};
+  let rows = asanaList_('/projects/' + sv.project + '/tasks', {completed_since: range.sinceUtc, opt_fields: optFields, limit: 100})
+    .filter(t => !t.parent && !seen2[t.gid] && (seen2[t.gid] = true) && t.due_on && t.due_on >= range.start && t.due_on <= range.end)
+    .map(t => ({t: t, f: fieldOf(t)}));
+  // 登録エラーの重複（同一秒に一括生成＋主要項目が空）を除外
+  const bySecond = tally_(rows, x => String(x.t.created_at || '').slice(0, 19));
+  const blank = x => !x.f[CFG.fields.p] && !x.f[sv.source] && !x.f[sv.result];
+  const excluded = rows.filter(x => bySecond[String(x.t.created_at || '').slice(0, 19)] > 1 && blank(x)).length;
+  rows = rows.filter(x => !(bySecond[String(x.t.created_at || '').slice(0, 19)] > 1 && blank(x)));
+  const normName = s => String(s || '').normalize('NFKC').replace(/\s+/g, '');
+  const propertyOf = x => normName(x.f[CFG.fields.p]).replace(/[0-9０-９]+号?室?$/, '');
+  const group5 = src => ({SUUMO: 'SUUMO', 'アットホーム': 'アットホーム', '看板': '看板', '仲介業者': '仲介', '仲介同行': '仲介', 'ホームページ': 'HP', '紹介': '紹介'})[src] || (src ? 'その他' : '未設定');
+  const axisCount = (list, keyFn) => {
+    const people = {}, props = {};
+    list.forEach(x => {
+      const k = keyFn(x) || '未設定';
+      const person = normName(x.t.name);
+      (people[k] = people[k] || {})[person] = true;                       // ②人物名ごと
+      (props[k] = props[k] || {})[person + '|' + propertyOf(x)] = true;    // ①物件ごと（同一物件の複数号室は1件）
+    });
+    const out = {};
+    Object.keys(people).forEach(k => { out[k] = {people: Object.keys(people[k]).length, properties: Object.keys(props[k]).length}; });
+    return out;
+  };
+  const inquiry = rows.filter(x => x.f[sv.type] === '反響' || x.f[sv.type] === 'かってに内見');
+  const broker = rows.filter(x => x.f[sv.type] === '仲介同行');
+  const response = {
+    total: axisCount(inquiry, () => '合計')['合計'] || {people: 0, properties: 0},
+    byType: axisCount(inquiry, x => x.f[sv.type]),
+    bySource: axisCount(inquiry, x => x.f[sv.source]),
+    byGroup: axisCount(inquiry, x => group5(x.f[sv.source])),
+    byResult: axisCount(inquiry, x => x.f[sv.result]),
+    byStore: axisCount(inquiry, x => x.f[sv.store]),
+    byArea: axisCount(inquiry, x => x.f[CFG.fields.a]),
+    brokerVisits: broker.length,
+    excluded: excluded,
+    // 物件別の反響件数（物件ごと軸）。空室の「反響ゼロ」判定に使う。個人名は含めない
+    byProperty: (() => { const o = {}; inquiry.forEach(x => { const p = propertyOf(x); if (!p) return; (o[p] = o[p] || {})[normName(x.t.name)] = true; }); Object.keys(o).forEach(k => { o[k] = Object.keys(o[k]).length; }); return o; })()
+  };
+  return {month: month, asOf: new Date().toISOString(), range: range, application: application, response: response};
+}
+
+/* ---------- 管理戸数の自動取得（Teams 全体会議資料・Microsoft Graph） ---------- */
+/* 事前に Microsoft Entra でアプリ登録（アプリケーション権限 Sites.Read.All／Files.Read.All・管理者の同意）が必要。
+   MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET をスクリプトプロパティに保存し、installManagementTrigger を1回実行する */
+
+function graphToken_() {
+  const pr = PropertiesService.getScriptProperties();
+  const tenant = pr.getProperty('MS_TENANT_ID'), id = pr.getProperty('MS_CLIENT_ID'), secret = pr.getProperty('MS_CLIENT_SECRET');
+  if (!tenant || !id || !secret) throw new Error('MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET が未設定です');
+  const res = UrlFetchApp.fetch('https://login.microsoftonline.com/' + tenant + '/oauth2/v2.0/token', {
+    method: 'post', muteHttpExceptions: true,
+    payload: {client_id: id, client_secret: secret, scope: 'https://graph.microsoft.com/.default', grant_type: 'client_credentials'}
+  });
+  const body = JSON.parse(res.getContentText());
+  if (!body.access_token) throw new Error('Microsoftの認証に失敗しました：' + (body.error_description || res.getResponseCode()));
+  return body.access_token;
+}
+
+function graphGet_(token, path) {
+  const res = UrlFetchApp.fetch('https://graph.microsoft.com/v1.0' + path, {headers: {Authorization: 'Bearer ' + token}, muteHttpExceptions: true});
+  if (res.getResponseCode() >= 300) throw new Error('Microsoft Graph ' + res.getResponseCode() + '：' + path);
+  return JSON.parse(res.getContentText());
+}
+
+function graphChildren_(token, itemPath) {
+  const enc = itemPath.split('/').map(encodeURIComponent).join('/');
+  return graphGet_(token, '/drives/' + CFG.meetingDocs.driveId + '/root:/' + enc + ':/children?$top=200').value || [];
+}
+
+/** 最新の全体会議資料を探して管理戸数を読み、M_YYYY-MM（実績月）に保存する。変化がなければ何もしない */
+function importManagementFromMeetingDoc() {
+  const token = graphToken_();
+  const base = CFG.meetingDocs.folder;
+  const years = graphChildren_(token, base).filter(x => x.folder && /^\d{4}年$/.test(x.name)).map(x => x.name).sort();
+  if (!years.length) throw new Error('年フォルダが見つかりません');
+  const yearPath = base + '/' + years[years.length - 1];
+  const rounds = graphChildren_(token, yearPath).filter(x => x.folder && /^第\d+回\d{6}/.test(x.name))
+    .sort((a, b) => Number(b.name.match(/^第(\d+)回/)[1]) - Number(a.name.match(/^第(\d+)回/)[1]));
+  for (const round of rounds) {
+    const file = graphChildren_(token, yearPath + '/' + round.name)
+      .filter(x => x.file && /全体会議資料.*\.xlsx$/.test(x.name) && /(\d{4})年(\d{1,2})月度[（(](\d{1,2})月実績/.test(x.name))[0];
+    if (!file) continue;
+    const m = file.name.match(/(\d{4})年(\d{1,2})月度[（(](\d{1,2})月実績/);
+    const year = Number(m[3]) > Number(m[2]) ? Number(m[1]) - 1 : Number(m[1]);
+    const month = year + '-' + ('0' + m[3]).slice(-2);
+    const sheets = graphGet_(token, '/drives/' + CFG.meetingDocs.driveId + '/items/' + file.id + '/workbook/worksheets').value || [];
+    const sheet = sheets.find(w => /^令和\d+年\d+月期/.test(String(w.name).trim()));
+    if (!sheet) throw new Error(file.name + '：「令和○年○月期」タブが見つかりません');
+    const values = graphGet_(token, '/drives/' + CFG.meetingDocs.driveId + '/items/' + file.id +
+      "/workbook/worksheets('" + encodeURIComponent(sheet.name) + "')/range(address='X4:AF8')").values;
+    // 「2.エリア別」：4行目＝見出し、5行目＝サブリース戸数、8行目＝一般管理戸数。列 X/Z/AB/AD＝長崎中央/長崎北/諫早/大村、AF＝計
+    const cols = {'長崎中央': 0, '長崎北': 2, '諫早': 4, '大村': 6};
+    const areas = {};
+    Object.keys(cols).forEach(a => {
+      if (String(values[0][cols[a]]).trim() !== a) throw new Error(file.name + '：見出しが想定と違います（' + values[0][cols[a]] + '）。セル位置を確認してください');
+      areas[a] = {sub: Number(values[1][cols[a]]), general: Number(values[4][cols[a]])};
+      if (!isFinite(areas[a].sub) || !isFinite(areas[a].general)) throw new Error(file.name + '：' + a + 'の戸数が数値ではありません');
+    });
+    const sum = k => Object.keys(areas).reduce((n, a) => n + areas[a][k], 0);
+    if (sum('sub') !== Number(values[1][8]) || sum('general') !== Number(values[4][8])) throw new Error(file.name + '：合計が一致しません');
+    const pr = PropertiesService.getScriptProperties();
+    const before = pr.getProperty('M_' + month);
+    const prevAreas = before ? JSON.stringify(JSON.parse(before).areas) : null;
+    if (prevAreas === JSON.stringify(areas)) { Logger.log(month + '：変更なし（' + file.name + '）'); return; }
+    pr.setProperty('M_' + month, JSON.stringify({areas: areas, source: file.name + '「' + sheet.name.trim() + '」2.エリア別（自動取得）', savedAt: new Date().toISOString()}));
+    CacheService.getScriptCache().remove('snapshot_n');
+    Logger.log(month + '：登録しました（' + file.name + '）');
+    notifyAdmin_('管理戸数を自動登録しました', month + ' の管理戸数を ' + file.name + ' から登録しました（サブ' + sum('sub') + '・一般' + sum('general') + '）。');
+    return;
+  }
+  throw new Error('全体会議資料が見つかりません');
+}
+
+/** 手動で1回実行：毎日17:30に管理戸数の自動取得と健全性チェックを行う */
+function installManagementTrigger() {
+  ScriptApp.getProjectTriggers().filter(t => ['dailyJob'].includes(t.getHandlerFunction())).forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('dailyJob').timeBased().everyDays(1).atHour(17).nearMinute(30).inTimezone('Asia/Tokyo').create();
+}
+
+function dailyJob() {
+  const errors = [];
+  try { asanaGet_('/users/me', {opt_fields: 'name'}); } catch (e) { errors.push('Asana接続：' + e.message); }
+  if (PropertiesService.getScriptProperties().getProperty('MS_CLIENT_ID')) {
+    try { importManagementFromMeetingDoc(); } catch (e) { errors.push('管理戸数の自動取得：' + e.message); }
+  }
+  const latest = Object.keys(readManagement_()).sort().pop();
+  const expected = (() => { const [y, m] = todayJst_().split('-').map(Number); return new Date(Date.UTC(y, m - 3, 1)).toISOString().slice(0, 7); })();
+  if (!latest || latest < expected) errors.push('管理戸数が古いままです（最新：' + (latest || 'なし') + '）');
+  if (errors.length) notifyAdmin_('空室業務ダッシュボード：要確認', errors.join('\n'));
+}
+
+function notifyAdmin_(subject, body) {
+  const to = PropertiesService.getScriptProperties().getProperty('ALERT_EMAIL');
+  if (!to) return;
+  try { MailApp.sendEmail(to, subject, body + '\n\n（空室業務ダッシュボード GAS から自動送信）'); } catch (e) { Logger.log('通知を送れませんでした：' + e.message); }
+}
+
 /* ---------- Asana API ---------- */
 
 function asanaToken_() {
@@ -581,7 +789,15 @@ function asanaList_(path, params) {
 
 function passOk_(key, value) {
   const expected = PropertiesService.getScriptProperties().getProperty(key);
+  if (key === 'EDIT_PASSCODE' && !expected) return true; // 巡回登録は合言葉を空にすると誰でも登録できる
   return Boolean(expected) && String(value || '') === expected;
+}
+
+// 「2026年09月21日」「2026/9/21」「2026-09-21」などを YYYY-MM-DD に
+function parseJpDate_(text) {
+  const m = String(text || '').normalize('NFKC').match(/(\d{4})\D{1,2}(\d{1,2})\D{1,2}(\d{1,2})/);
+  if (!m) return null;
+  return m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2);
 }
 
 function todayJst_() { return Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd'); }

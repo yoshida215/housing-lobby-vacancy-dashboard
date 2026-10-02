@@ -7,6 +7,9 @@
   const el = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const id = new URLSearchParams(location.search).get('id');
+  // 端末登録用リンク（…#key=合言葉）を開いたら、この端末に合言葉を保存してURLから消す
+  const keyHash = location.hash.match(/key=([^&]+)/);
+  if (keyHash) { api.prefs.set({passcode: decodeURIComponent(keyHash[1])}); history.replaceState(null, '', location.pathname + location.search); }
   const data = await api.snapshot();
   const room = data.vacancies.find(row => row.id === id);
   el('asof').textContent = `Asana取得 ${new Intl.DateTimeFormat('ja-JP',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(data.asOf))}${data.live ? '' : '（固定データ）'}`;
@@ -150,6 +153,12 @@
   el('visit-date').max = today;
   el('visit-date').addEventListener('change',updatePreview);
   document.querySelectorAll('.shared-only').forEach(node => {node.hidden = !shared;});
+  // 合言葉が不要な設定、またはこの端末に保存済みなら入力欄を出さない
+  const passBox = el('passcode').closest('.shared-only');
+  if (shared) api.status().then(st => {
+    if (!st.passcodeRequired) { passBox.hidden = true; el('passcode').value = ''; }
+    else if (api.prefs.get().passcode) { passBox.hidden = true; passBox.insertAdjacentHTML('afterend', '<p class="location-help" id="pass-saved">この端末は巡回登録の合言葉を保存済みです。<a href="#" id="pass-change">変更する</a></p>'); el('pass-change').addEventListener('click', e => { e.preventDefault(); passBox.hidden = false; el('pass-saved').remove(); }); }
+  }).catch(() => {});
   if (!shared) {
     el('submit-button').textContent = '巡回記録を保存';
     el('storage-note').textContent = '共有保存は未接続のため、巡回記録はこのブラウザ内にのみ保存されます。';
@@ -246,7 +255,7 @@
       return;
     }
     if (!body.inspector) {message('担当者名を入力してください。', true);return;}
-    if (!body.passcode) {message('巡回登録の合言葉を入力してください。', true);return;}
+    if (!body.passcode && !el('passcode').closest('.shared-only').hidden) {message('巡回登録の合言葉を入力してください。', true);return;}
     pending = {...body, clientId: pending?.clientId || api.newId()};
     message('確認内容を作成しています…');
     try {

@@ -13,6 +13,7 @@
   <script defer src="patrol-store.js"></script>
   <script defer src="api.js"></script>
   <script defer src="app.js"></script>
+  <script defer src="promotion.js"></script>
 </head>
 <body>
   <header class="masthead">
@@ -27,6 +28,7 @@
       <button class="tab" type="button" data-view="occupancy">入居率・空室</button>
       <button class="tab" type="button" data-view="restoration">原状回復完了</button>
       <button class="tab" type="button" data-view="patrol">巡回</button>
+      <button class="tab" type="button" data-view="promotion">入居促進</button>
     </nav>
     <div class="notice" id="data-notice" role="note"></div>
 
@@ -65,9 +67,22 @@
 
     <section class="view" id="view-patrol" aria-labelledby="patrol-title" hidden>
       <div class="section-heading"><div><p class="eyebrow">PATROL</p><h1 id="patrol-title">空室物件の巡回</h1></div></div>
-      <div class="notice subtle">各部屋を開くと、巡回チェックと履歴を登録できます。記録はAsanaの該当空室タスクにコメントとして残り、全員の画面に共有されます。</div>
+      <div class="notice subtle">各部屋を開くと、巡回チェックと履歴を登録できます。記録はAsanaの物件タスクに「巡回確認（日付）」サブタスクとして残り、全員の画面に共有されます。</div>
       <div class="panel"><div class="panel-heading"><h2>巡回状況</h2><span id="patrol-count"></span></div><div id="patrol-summary"></div></div>
-      <div class="panel"><div class="panel-heading"><h2>部屋ごとの巡回管理</h2><span>次回予定は前回巡回日の45日後</span></div><div class="filters"><label>エリア<select id="patrol-area"><option value="all">全エリア</option><option>長崎中央</option><option>長崎北</option><option>諫早</option><option>大村</option></select></label><label>巡回状況<select id="patrol-status"><option value="all">すべて</option><option value="due">要巡回</option><option value="planned">予定日前</option></select></label><label class="search-field">物件名・号室<input id="patrol-search" type="search" placeholder="物件名や号室で検索"></label></div><div class="table-scroll"><table class="list-table"><thead><tr><th>物件・号室</th><th>エリア</th><th>前回巡回</th><th>次回予定</th><th>巡回状況</th><th>Asanaステージング</th></tr></thead><tbody id="patrol-body"></tbody></table></div></div>
+      <div class="panel"><div class="panel-heading"><h2>部屋ごとの巡回管理</h2><span>空室期間が長い順（解約日から計算）。次回予定は前回巡回日の45日後</span></div><div class="filters"><label>エリア<select id="patrol-area"><option value="all">全エリア</option><option>長崎中央</option><option>長崎北</option><option>諫早</option><option>大村</option></select></label><label>巡回状況<select id="patrol-status"><option value="all">すべて</option><option value="due">要巡回</option><option value="planned">予定日前</option></select></label><label class="search-field">物件名・号室<input id="patrol-search" type="search" placeholder="物件名や号室で検索"></label></div><div class="table-scroll"><table class="list-table"><thead><tr><th>物件・号室</th><th class="num">空室日数</th><th>エリア</th><th>前回巡回</th><th>次回予定</th><th>巡回状況</th><th>Asanaステージング</th></tr></thead><tbody id="patrol-body"></tbody></table></div></div>
+    </section>
+
+    <section class="view" id="view-promotion" aria-labelledby="promotion-title" hidden>
+      <div class="section-heading"><div><p class="eyebrow">LEASING PROMOTION</p><h1 id="promotion-title">入居促進</h1></div><p class="section-meta" id="promo-asof"></p></div>
+      <div class="filters"><label>対象月<select id="promo-month"></select></label><label>&nbsp;<button type="button" class="secondary-button" id="promo-refresh">最新に更新</button></label></div>
+      <div class="notice subtle" id="promo-notice">月を選ぶと、Asanaから申込と反響を集計します（数十秒かかることがあります）。</div>
+      <div class="kpis" id="promo-kpis"></div>
+      <div class="dashboard-grid promo-grid">
+        <section class="panel"><div class="panel-heading"><h2>申込の内訳</h2><span>【空室一覧】申込日が対象月</span></div><div id="promo-apps"></div></section>
+        <section class="panel"><div class="panel-heading"><h2>反響の内訳</h2><span>【セルフ内見予約表】人数／物件ごと</span></div><div id="promo-resp"></div></section>
+      </div>
+      <section class="panel"><div class="panel-heading"><h2>対象月に反響がない空室</h2><span>空室期間が長い順・入居促進の優先候補</span></div><div class="table-scroll"><table class="list-table"><thead><tr><th>物件・号室</th><th class="num">空室日数</th><th>エリア</th><th>空室状況</th></tr></thead><tbody id="promo-zero"></tbody></table></div></section>
+      <p class="footnote">申込：【空室一覧】の親タスクのうち「申込日」が対象月のもの（ステータスは問わない。テンプレ・除外は除く）。反響：【セルフ内見予約表】で期日（反響受付日／内見日）が対象月の「反響」「かってに内見」。人数＝同じ氏名は1人、物件ごと＝同じ人でも物件が違えば別件（同一物件の複数号室は1件）。仲介同行は反響に含めず別に数えます。個人名は表示しません。</p>
     </section>
 
     <footer>データ元：Asana【空室一覧】【14日ルール　原状回復工事業務】。管理戸数の正本はTeams「18全体月次会議」の全体会議資料（非公開）。巡回記録の正本はAsanaの各空室タスクのコメントです。</footer>
