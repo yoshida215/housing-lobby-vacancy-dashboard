@@ -668,7 +668,8 @@ function buildPromotion_(month) {
   const sv = CFG.selfViewing;
   const seen2 = {};
   let rows = asanaList_('/projects/' + sv.project + '/tasks', {completed_since: range.sinceUtc, opt_fields: optFields, limit: 100})
-    .filter(t => !t.parent && !seen2[t.gid] && (seen2[t.gid] = true) && t.due_on && t.due_on >= range.start && t.due_on <= range.end)
+    // 親タスクの有無は問わない（反響タスクを空室一覧の部屋に紐付ける運用があるため）。社内用サブタスクは種別が空なので反響に入らない
+    .filter(t => !seen2[t.gid] && (seen2[t.gid] = true) && t.due_on && t.due_on >= range.start && t.due_on <= range.end)
     .map(t => ({t: t, f: fieldOf(t)}));
   // 登録エラーの重複（同一秒に一括生成＋主要項目が空）を除外
   const bySecond = tally_(rows, x => String(x.t.created_at || '').slice(0, 19));
