@@ -7,7 +7,7 @@
   <meta name="description" content="空室・入居率・原状回復・巡回を確認する社内向け試作画面">
   <title>空室業務ダッシュボード</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='13' fill='%23102841'/%3E%3Cpath d='M12 31 32 14l20 17v21H12z' fill='none' stroke='%23f4bb61' stroke-width='5' stroke-linejoin='round'/%3E%3Cpath d='M26 52V36h12v16' fill='none' stroke='%23f4bb61' stroke-width='5'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="styles.css?v=20261002">
+  <link rel="stylesheet" href="styles.css?v=20261002b">
   <script defer src="config.js?v=20261002"></script>
   <script defer src="snapshot-current.js?v=20261002"></script>
   <script defer src="patrol-store.js?v=20261002"></script>
@@ -15,7 +15,7 @@
   <script defer src="outbox.js?v=20261002"></script>
   <script defer src="outbox-bar.js?v=20261002"></script>
   <script defer src="app.js?v=20261002"></script>
-  <script defer src="promotion.js?v=20261002"></script>
+  <script defer src="promotion.js?v=20261002b"></script>
 </head>
 <body>
   <header class="masthead">
@@ -84,7 +84,7 @@
         <section class="panel"><div class="panel-heading"><h2>申込の内訳</h2><span>【空室一覧】申込日が対象月</span></div><div id="promo-apps"></div></section>
         <section class="panel"><div class="panel-heading"><h2>反響の内訳</h2><span>【セルフ内見予約表】人数／物件ごと</span></div><div id="promo-resp"></div></section>
       </div>
-      <section class="panel"><div class="panel-heading"><h2>対象月に反響がない空室</h2><span>空室期間が長い順・入居促進の優先候補</span></div><div class="table-scroll"><table class="list-table"><thead><tr><th>物件・号室</th><th class="num">空室日数</th><th>エリア</th><th>空室状況</th></tr></thead><tbody id="promo-zero"></tbody></table></div></section>
+      <section class="panel"><details class="promo-fold big"><summary><span class="promo-title">対象月に反響がない空室</span><span class="promo-preview"><strong id="promo-zero-count">—</strong>　空室期間が長い順・入居促進の優先候補</span></summary><div class="promo-body"><div class="table-scroll"><table class="list-table"><thead><tr><th>物件・号室</th><th class="num">空室日数</th><th>エリア</th><th>空室状況</th></tr></thead><tbody id="promo-zero"></tbody></table></div></div></details></section>
       <p class="footnote">申込：【空室一覧】の親タスクのうち「申込日」が対象月のもの（ステータスは問わない。テンプレ・除外は除く）。反響：【セルフ内見予約表】で期日（反響受付日／内見日）が対象月の「反響」「かってに内見」。人数＝同じ氏名は1人、物件ごと＝同じ人でも物件が違えば別件（同一物件の複数号室は1件）。仲介同行は反響に含めず別に数えます。個人名は表示しません。</p>
     </section>
 

@@ -17,17 +17,21 @@
 
   const waitDash = () => new Promise(resolve => { const t = () => window.DASH ? resolve(window.DASH) : setTimeout(t, 100); t(); });
   const sortEntries = obj => Object.entries(obj || {}).sort((a, b) => (b[1].people ?? b[1]) - (a[1].people ?? a[1]) || a[0].localeCompare(b[0], 'ja'));
-  const table1 = (title, obj) => {
+  // 見出しだけを並べ、クリックで詳細（表）を開く。見出しの右に上位2つを要約表示
+  const fold = (title, preview, body) => `<details class="promo-fold"><summary><span class="promo-title">${esc(title)}</span><span class="promo-preview">${preview}</span></summary><div class="promo-body">${body}</div></details>`;
+  const table1 = (title, obj, unit = '件') => {
     const rows = sortEntries(obj);
     if (!rows.length) return '';
     const total = rows.reduce((n, [, v]) => n + v, 0);
-    return `<h3 class="promo-h">${esc(title)}</h3><table class="mini-table"><tbody>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${fmt(v)}</td><td class="bar-cell"><span style="width:${total ? Math.round(v / total * 100) : 0}%"></span></td></tr>`).join('')}</tbody></table>`;
+    const preview = rows.slice(0, 2).map(([k, v]) => `${esc(k)} ${fmt(v)}${unit}`).join('・') + (rows.length > 2 ? ` ほか${rows.length - 2}` : '');
+    return fold(title, preview, `<table class="mini-table"><tbody>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${fmt(v)}${unit}</td><td class="num muted">${total ? Math.round(v / total * 100) : 0}%</td><td class="bar-cell"><span style="width:${total ? Math.round(v / total * 100) : 0}%"></span></td></tr>`).join('')}</tbody></table>`);
   };
   const table2 = (title, obj) => {
     const rows = sortEntries(obj);
     if (!rows.length) return '';
     const total = rows.reduce((n, [, v]) => n + v.people, 0);
-    return `<h3 class="promo-h">${esc(title)}</h3><table class="mini-table"><thead><tr><th></th><th class="num">人数</th><th class="num">物件ごと</th><th></th></tr></thead><tbody>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${fmt(v.people)}</td><td class="num">${fmt(v.properties)}</td><td class="bar-cell"><span style="width:${total ? Math.round(v.people / total * 100) : 0}%"></span></td></tr>`).join('')}</tbody></table>`;
+    const preview = rows.slice(0, 2).map(([k, v]) => `${esc(k)} ${fmt(v.people)}人`).join('・') + (rows.length > 2 ? ` ほか${rows.length - 2}` : '');
+    return fold(title, preview, `<table class="mini-table"><thead><tr><th></th><th class="num">人数</th><th class="num">物件ごと</th><th class="num">割合</th><th></th></tr></thead><tbody>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${fmt(v.people)}</td><td class="num">${fmt(v.properties)}</td><td class="num muted">${total ? Math.round(v.people / total * 100) : 0}%</td><td class="bar-cell"><span style="width:${total ? Math.round(v.people / total * 100) : 0}%"></span></td></tr>`).join('')}</tbody></table>`);
   };
 
   const render = async (month, refresh) => {
@@ -61,6 +65,7 @@
     const hit = new Set(Object.keys(r.byProperty || {}));
     const zero = dash.data.vacancies.filter(v => v.s === '空室中' && v.p && !hit.has(key(v.p)))
       .sort((x, y) => (dash.vacancyDays(y) ?? -1e9) - (dash.vacancyDays(x) ?? -1e9));
+    el('promo-zero-count').textContent = `${fmt(zero.length)}件`;
     el('promo-zero').innerHTML = zero.length ? zero.slice(0, 50).map(v => {
       const days = dash.vacancyDays(v);
       return `<tr><td><a class="room-link" href="${dash.roomUrl(v.id)}">${esc(v.p)} ${esc(v.r || '')}</a></td><td class="num">${days === null ? '—' : days < 0 ? '退去前' : `${days}日`}</td><td>${esc(v.a || '地区なし')}</td><td>${esc(v.c || '空欄')}</td></tr>`;
