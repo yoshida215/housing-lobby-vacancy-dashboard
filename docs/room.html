@@ -7,18 +7,21 @@
   <meta name="description" content="部屋ごとの巡回チェックと次回巡回予定">
   <title>部屋別巡回｜空室業務ダッシュボード</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='13' fill='%23102841'/%3E%3Cpath d='M12 31 32 14l20 17v21H12z' fill='none' stroke='%23f4bb61' stroke-width='5' stroke-linejoin='round'/%3E%3Cpath d='M26 52V36h12v16' fill='none' stroke='%23f4bb61' stroke-width='5'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="room-location.css">
-  <script defer src="config.js"></script>
-  <script defer src="snapshot-current.js"></script>
-  <script defer src="property-addresses.js"></script>
-  <script defer src="patrol-store.js"></script>
-  <script defer src="patrol-items.js"></script>
-  <script defer src="api.js"></script>
-  <script defer src="room.js"></script>
+  <link rel="stylesheet" href="styles.css?v=20261002">
+  <link rel="stylesheet" href="room-location.css?v=20261002">
+  <script defer src="config.js?v=20261002"></script>
+  <script defer src="snapshot-current.js?v=20261002"></script>
+  <script defer src="property-addresses.js?v=20261002"></script>
+  <script defer src="patrol-store.js?v=20261002"></script>
+  <script defer src="patrol-items.js?v=20261002"></script>
+  <script defer src="api.js?v=20261002"></script>
+  <script defer src="outbox.js?v=20261002"></script>
+  <script defer src="outbox-bar.js?v=20261002"></script>
+  <script defer src="room.js?v=20261002"></script>
 </head>
 <body>
   <header class="masthead"><div class="masthead-inner"><div class="brand"><span class="brand-mark">H</span><span>空室業務ダッシュボード</span><span class="prototype-pill">ハウジングロビー</span></div><div class="asof" id="asof"></div></div></header>
+  <div class="outbox-bar" id="outbox-bar" hidden></div>
   <main class="shell room-shell">
     <a class="back-link" href="index.html#patrol">← 巡回一覧に戻る</a>
     <div id="room-not-found" class="panel" hidden><h1>部屋が見つかりません</h1><p>一覧から部屋を選び直してください。</p></div>

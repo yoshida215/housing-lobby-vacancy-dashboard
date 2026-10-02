@@ -49,9 +49,10 @@
   const baseLabel = managementCurrent ? `管理戸数：${monthLabel(rateMonth)}実績（会議資料）` : '';
   const badge = (value, tone='muted') => `<span class="badge ${tone}">${esc(value)}</span>`;
 
-  el('asof').textContent = `Asana取得 ${dateTime(data.asOf)}${data.live ? '（最新）' : '（固定データ）'} ／ ${managementCurrent ? baseLabel : '管理戸数 未登録'}`;
+  el('asof').textContent = `Asana取得 ${dateTime(data.asOf)}${data.stale ? '（前回取得分）' : data.live ? '（最新）' : '（固定データ）'} ／ ${managementCurrent ? baseLabel : '管理戸数 未登録'}`;
   const notices = [];
-  if (data.error) notices.push(`最新データを取得できなかったため、${dateTime(data.asOf)}時点の固定データで表示しています（${data.error}）。`);
+  if (data.error) notices.push(`サーバーに接続できないため、${dateTime(data.asOf)}時点のデータで表示しています（${data.error}）。巡回登録は送信待ちとして保存され、つながると自動で送られます。`);
+  else if (data.stale) notices.push(`Asanaに一時的に接続できないため、${dateTime(data.asOf)}時点のデータで表示しています。復旧すると自動で最新になります。`);
   else if (!data.live) notices.push(`${dateTime(data.asOf)}時点の固定データです。`);
   else notices.push('Asanaの最新データを表示しています（最大10分前）。巡回記録はAsanaの物件タスクの「巡回確認（日付）」サブタスクに蓄積されます。');
   if (!managementCurrent) notices.push('管理戸数が未登録のため、入居率・評価入居率は表示しません。');

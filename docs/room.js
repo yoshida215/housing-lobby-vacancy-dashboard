@@ -261,15 +261,35 @@
     try {
       const preview = await api.previewPatrol(pending);
       el('preview-text').textContent = preview.text + (preview.actions?.length ? `\n\n▼ あわせてAsanaで行う更新\n${preview.actions.map(line => `・${line}`).join('\n')}` : '');
+      offline = false;
       showPreview(true);
       message('');
-    } catch (err) {message(`確認できませんでした：${err.message}`, true);}
+    } catch (err) {
+      if (err.retryable !== false && window.Outbox) {
+        // 電波がない・Asanaの不調：確認画面は作れないが、入力内容を送信待ちに保存できる
+        offline = true;
+        el('preview-text').textContent = `今はサーバーに接続できないため、Asanaで行う更新の確認ができません（${err.message}）。\n「この内容でAsanaに登録」を押すと、この端末に送信待ちとして保存し、つながったら自動で送信します（二重登録にはなりません）。`;
+        showPreview(true);
+        message('');
+      } else {
+        message(`確認できませんでした：${err.message}`, true);
+      }
+    }
   });
   el('cancel-button').addEventListener('click', () => {showPreview(false); message('');});
+  let offline = false;
   el('confirm-button').addEventListener('click', async () => {
     if (!pending) return;
     el('confirm-button').disabled = true;
     const list = photoList();
+    if (offline) {
+      await window.Outbox.add({...pending, photos: list}, el('room-name').textContent);
+      pending = null; loadedLocal = null; offline = false;
+      showPreview(false); resetForm();
+      message('送信待ちとして保存しました。つながると自動で送信します。');
+      el('confirm-button').disabled = false;
+      return;
+    }
     message(list.length ? `Asanaに登録しています（写真${list.length}枚を送信中）…` : 'Asanaに登録しています…');
     try {
       const result = await api.savePatrol({...pending, photos: list});
@@ -282,7 +302,15 @@
       message(`${result.duplicate ? '登録済みの記録でした' : 'Asanaに登録しました'}。次回巡回予定は${result.nextDate}です。${result.actions?.length ? `（${result.actions.join('／')}）` : ''}${result.photos ? `写真${result.photos}枚を添付しました。` : ''}`);
       await loadRecords(); lastChecks = records[0]?.checks || {}; showSource(); resetForm(); render();
     } catch (err) {
-      message(`登録できませんでした：${err.message}（もう一度押しても二重登録にはなりません）`, true);
+      if (err.retryable !== false && window.Outbox) {
+        // 電波・Asanaの不調：端末に保存して自動再送（登録IDが同じなので二重登録にならない）
+        await window.Outbox.add({...pending, photos: list}, el('room-name').textContent);
+        pending = null; loadedLocal = null;
+        showPreview(false); resetForm();
+        message(`今は送信できないため、この端末に「送信待ち」として保存しました。つながると自動で送信します。（${err.message}）`);
+      } else {
+        message(`登録できませんでした：${err.message}`, true);
+      }
     } finally {
       el('confirm-button').disabled = false;
     }

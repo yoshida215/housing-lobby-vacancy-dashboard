@@ -79,7 +79,11 @@ function doGet(e) {
     switch (p.action) {
       case 'snapshot': return json_(getSnapshot_(p.refresh === '1'));
       case 'patrols': return json_(getPatrols_(p.task));
-      case 'ping': return json_({ok: true, at: new Date().toISOString(), passcodeRequired: Boolean(PropertiesService.getScriptProperties().getProperty('EDIT_PASSCODE'))});
+      case 'ping': {
+        const pr = PropertiesService.getScriptProperties();
+        return json_({ok: true, at: new Date().toISOString(), passcodeRequired: Boolean(pr.getProperty('EDIT_PASSCODE')),
+          lastOk: pr.getProperty('STATUS_LAST_OK'), lastError: pr.getProperty('STATUS_LAST_ERROR'), autoRefresh: ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'refreshJob')});
+      }
       case 'promotion': return json_(getPromotion_(p.month, p.refresh === '1'));
       default: return json_({error: '不明な操作です'});
     }
@@ -101,7 +105,9 @@ function doPost(e) {
       default: return json_({error: '不明な操作です'});
     }
   } catch (err) {
-    return json_({error: String(err.message || err)});
+    // retryable＝通信・Asana側の一時的な問題。画面はこの場合だけ「送信待ち」に保存して自動再送する
+    const retryable = Boolean(err.retryable) || /Lock|timeout|タイムアウト|Service invoked too many times|Address unavailable/i.test(String(err.message || err));
+    return json_({error: String(err.message || err), retryable: retryable});
   }
 }
 
@@ -117,9 +123,45 @@ function getSnapshot_(refresh) {
       return data;
     }
   }
-  const data = buildSnapshot_();
-  cachePut_(cache, 'snapshot', JSON.stringify(data), CFG.cacheSeconds);
+  let data;
+  try {
+    data = refreshSnapshot_();
+  } catch (err) {
+    // Asanaに接続できないときは、最後に正常に取得したデータを返す（画面に取得時刻と注意を出す）
+    const last = persistGet_('S');
+    if (!last) throw err;
+    data = JSON.parse(last);
+    data.stale = true;
+    data.staleReason = String(err.message || err);
+    cachePut_(cache, 'snapshot', JSON.stringify(data), 120);
+  }
   data.patrolIndex = readPatrolIndex_();
+  return data;
+}
+
+// Asanaから取り直し、異常がなければ「最後に正常に取得したデータ」として保存する
+function refreshSnapshot_() {
+  const data = buildSnapshot_();
+  const last = persistGet_('S');
+  if (last) {
+    const prev = JSON.parse(last);
+    const n = data.vacancies.length, m = (prev.vacancies || []).length;
+    if (m >= 20 && n < m * 0.5) {
+      const e = new Error('空室件数が前回の' + m + '件から' + n + '件に急減したため、取得結果を保留しました（Asanaの不調またはセクション変更の可能性）');
+      e.retryable = true;
+      throw e;
+    }
+  }
+  const named = data.vacancies.filter(v => v.p).length;
+  if (data.vacancies.length && named === 0) {
+    const e = new Error('物件名が1件も読めません。Asanaの項目「物件名」が変更された可能性があります');
+    e.retryable = true;
+    throw e;
+  }
+  persistPut_('S', JSON.stringify(data));
+  CacheService.getScriptCache().remove('snapshot_n');
+  cachePut_(CacheService.getScriptCache(), 'snapshot', JSON.stringify(data), CFG.cacheSeconds);
+  setStatus_('ok', 'snapshot');
   return data;
 }
 
@@ -363,15 +405,21 @@ function previewPatrol_(body) {
 /* 巡回結果に応じたAsana更新の計画（dry-run と本実行で共通）
    物件タスク └ 巡回確認（日付） └ 対応タスク（○○を設置 など）  の2段構成 */
 function planFollowUps_(r, task) {
-  const plan = {parent: null, existingParent: null, create: [], complete: [], parentsToCheck: {}, openByKey: {}, lines: []};
+  const plan = {parent: null, existingParent: null, create: [], complete: [], parentsToCheck: {}, openByKey: {}, mineChildren: {}, lines: []};
   const subs = asanaList_('/tasks/' + r.task + '/subtasks', {opt_fields: 'name,notes,completed', limit: 100});
   const mine = subs.find(t => String(t.notes || '').indexOf('ID:' + r.clientId) >= 0);
-  if (mine) plan.existingParent = mine.gid;
-  else { plan.parent = CFG.patrolTaskName(r.date); plan.lines.push('サブタスク「' + plan.parent + '」を作成（巡回記録）'); }
+  if (mine) {
+    // 同じ登録の再送（途中で失敗した場合など）。足りない対応タスクだけ作り足す
+    plan.existingParent = mine.gid;
+    asanaList_('/tasks/' + mine.gid + '/subtasks', {opt_fields: 'name,completed', limit: 100}).forEach(t => { plan.mineChildren[t.name] = t.gid; });
+  } else {
+    plan.parent = CFG.patrolTaskName(r.date);
+    plan.lines.push('サブタスク「' + plan.parent + '」を作成（巡回記録）');
+  }
 
-  // 未完了の対応タスク（過去の巡回確認の中、および旧形式の直下サブタスク）
+  // 未完了の対応タスク（今回以外の巡回確認の中、および旧形式の直下サブタスク）
   const openTasks = {};
-  subs.filter(t => /^巡回確認（/.test(t.name || '')).forEach(p => {
+  subs.filter(t => /^巡回確認（/.test(t.name || '') && (!mine || t.gid !== mine.gid)).forEach(p => {
     asanaList_('/tasks/' + p.gid + '/subtasks', {opt_fields: 'name,completed', limit: 100})
       .filter(t => !t.completed).forEach(t => { (openTasks[t.name] = openTasks[t.name] || []).push({gid: t.gid, parent: p.gid, from: p.name}); });
   });
@@ -386,16 +434,20 @@ function planFollowUps_(r, task) {
     if (!x.task) return;
     const open = openTasks[x.task] || [];
     if (v === false) {
-      if (open.length) { plan.openByKey[x.key] = open[0].gid; plan.lines.push('「' + x.task + '」は未完了のタスクがあるため作成しない（' + open[0].from + '）'); }
-      else if (!mine) { plan.create.push({key: x.key, name: x.task}); plan.lines.push('　└ 「' + x.task + '」を作成'); }
+      if (plan.mineChildren[x.task]) plan.openByKey[x.key] = plan.mineChildren[x.task];
+      else if (open.length) { plan.openByKey[x.key] = open[0].gid; plan.lines.push('「' + x.task + '」は未完了のタスクがあるため作成しない（' + open[0].from + '）'); }
+      else { plan.create.push({key: x.key, name: x.task}); plan.lines.push('　└ 「' + x.task + '」を作成'); }
     } else if (open.length) {
       open.forEach(t => { plan.complete.push(t.gid); if (t.parent) plan.parentsToCheck[t.parent] = true; });
       plan.lines.push('「' + x.task + '」を完了（' + open[0].from + '）');
     }
   });
-  if ((r.photoCount || r.otherIssue) && !mine) {
-    plan.create.push({key: 'other', name: CFG.otherTaskName});
-    plan.lines.push('　└ 「' + CFG.otherTaskName + '」を作成（' + [r.otherIssue ? 'コメントあり' : '', r.photoCount ? '写真' + r.photoCount + '枚を添付' : ''].filter(Boolean).join('・') + '）');
+  if (r.photoCount || r.otherIssue) {
+    if (plan.mineChildren[CFG.otherTaskName]) plan.openByKey.other = plan.mineChildren[CFG.otherTaskName];
+    else {
+      plan.create.push({key: 'other', name: CFG.otherTaskName});
+      plan.lines.push('　└ 「' + CFG.otherTaskName + '」を作成（' + [r.otherIssue ? 'コメントあり' : '', r.photoCount ? '写真' + r.photoCount + '枚を添付' : ''].filter(Boolean).join('・') + '）');
+    }
   }
   return plan;
 }
@@ -425,18 +477,20 @@ function subtaskData_(name, notes, who) {
 function applyFollowUps_(r, plan, task) {
   const targets = Object.assign({}, plan.openByKey);
   const who = assignmentFor_(task);
-  if (plan.parent) {
-    const parent = asanaPost_('/tasks/' + r.task + '/subtasks', subtaskData_(plan.parent, patrolText_(r), who));
-    targets[''] = parent.gid;
+  const parentGid = plan.existingParent || asanaPost_('/tasks/' + r.task + '/subtasks', subtaskData_(plan.parent, patrolText_(r), who)).gid;
+  targets[''] = parentGid;
+  {
     plan.create.forEach(c => {
       const x = CFG.patrolFields.find(f => f.key === c.key);
       const notes = x
         ? r.date + 'の巡回（担当：' + r.inspector + '）で「' + x.name + '：' + x.ng + '」を確認。\n対応後、次の巡回で「' + x.ok + '」を登録すると自動で完了になります。'
         : (r.otherIssue ? r.otherIssue + '\n\n' : '') + '―――\n' + r.date + 'の巡回（担当：' + r.inspector + '）で確認。' + (r.photoCount ? '写真' + r.photoCount + '枚を添付しています。' : '') + '\n対応後、このタスクを完了にしてください。';
-      const t = asanaPost_('/tasks/' + parent.gid + '/subtasks', subtaskData_(c.name, notes, who));
+      const t = asanaPost_('/tasks/' + parentGid + '/subtasks', subtaskData_(c.name, notes, who));
       targets[c.key] = t.gid;
+      targets['created_' + c.key] = true;
     });
-    if (!plan.create.length) asanaFetch_('put', '/tasks/' + parent.gid, null, {data: {completed: true}}); // 要対応なし＝巡回確認は完了
+    const hasChildren = plan.create.length || Object.keys(plan.mineChildren).length;
+    if (!hasChildren) asanaFetch_('put', '/tasks/' + parentGid, null, {data: {completed: true}}); // 要対応なし＝巡回確認は完了
   }
   plan.complete.forEach(gid => asanaFetch_('put', '/tasks/' + gid, null, {data: {completed: true}}));
   // 中の対応タスクがすべて完了した巡回確認は完了にする
@@ -458,15 +512,18 @@ function savePatrol_(body) {
     assertInProject_(task);
     // 同じ登録IDの巡回確認サブタスクがあれば作らない（二重送信対策）。項目・対応タスクも差分だけ反映
     const plan = planFollowUps_(r, task);
-    const dup = Boolean(plan.existingParent);
     const targets = applyFollowUps_(r, plan, task);
+    // 写真：既に添付済みの枚数から続きだけ送る（途中で失敗した再送でも重複しない）
     let attached = 0;
-    if (!dup) photos.forEach((p, i) => {
-      const parent = targets.other || targets[''];
-      if (!parent || !p || typeof p.data !== 'string' || p.data.length > 6000000) return;
-      asanaUpload_(parent, p.data, r.date + '_other_' + (i + 1) + '.jpg'); // 日本語名は添付で文字化けするため英字
+    const photoParent = targets.other || targets[''];
+    const already = photos.length && !targets.created_other
+      ? (asanaList_('/attachments', {parent: photoParent, opt_fields: 'name', limit: 100}).filter(a => /_other_\d+\.jpg$/.test(a.name || '')).length) : 0;
+    photos.slice(already).forEach((p, i) => {
+      if (!p || typeof p.data !== 'string' || p.data.length > 6000000) return;
+      asanaUpload_(photoParent, p.data, r.date + '_other_' + (already + i + 1) + '.jpg'); // 日本語名は添付で文字化けするため英字
       attached++;
     });
+    const dup = Boolean(plan.existingParent) && !plan.create.length && !attached;
     updatePatrolIndex_(r.task, r.date);
     CacheService.getScriptCache().remove('snapshot_n');
     return {ok: true, duplicate: dup, room: roomLabel_(task), nextDate: addDays_(r.date, CFG.intervalDays), actions: plan.lines, photos: attached};
@@ -555,7 +612,18 @@ function getPromotion_(month, refresh) {
   const cache = CacheService.getScriptCache();
   const key = 'promo_' + month;
   if (!refresh) { const hit = cacheGet_(cache, key); if (hit) return JSON.parse(hit); }
-  const data = buildPromotion_(month);
+  let data;
+  try {
+    data = buildPromotion_(month);
+  } catch (err) {
+    const last = persistGet_('P' + month.replace('-', ''));
+    if (!last) throw err;
+    data = JSON.parse(last);
+    data.stale = true;
+    data.staleReason = String(err.message || err);
+    return data;
+  }
+  persistPut_('P' + month.replace('-', ''), JSON.stringify(data));
   const current = month >= todayJst_().slice(0, 7);
   cachePut_(cache, key, JSON.stringify(data), current ? 1800 : 21600);
   return data;
@@ -712,15 +780,63 @@ function importManagementFromMeetingDoc() {
   throw new Error('全体会議資料が見つかりません');
 }
 
-/** 手動で1回実行：毎日17:30に管理戸数の自動取得と健全性チェックを行う */
-function installManagementTrigger() {
-  ScriptApp.getProjectTriggers().filter(t => ['dailyJob'].includes(t.getHandlerFunction())).forEach(t => ScriptApp.deleteTrigger(t));
+/** 手動で1回実行：自動処理を登録する（15分ごとのデータ更新、毎日17:30の点検・管理戸数の自動取得） */
+function installTriggers() {
+  ScriptApp.getProjectTriggers().filter(t => ['dailyJob', 'refreshJob'].includes(t.getHandlerFunction())).forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('dailyJob').timeBased().everyDays(1).atHour(17).nearMinute(30).inTimezone('Asia/Tokyo').create();
+  ScriptApp.newTrigger('refreshJob').timeBased().everyMinutes(15).create();
+  Logger.log('自動処理を登録しました');
+}
+function installManagementTrigger() { installTriggers(); } // 旧名
+
+/** 15分ごと：Asanaから取り直して「最後に正常なデータ」を更新する。失敗が続いたら通知 */
+function refreshJob() {
+  try {
+    refreshSnapshot_();
+  } catch (e) {
+    setStatus_('error', String(e.message || e));
+    const pr = PropertiesService.getScriptProperties();
+    const fails = Number(pr.getProperty('STATUS_FAILS') || 0) + 1;
+    pr.setProperty('STATUS_FAILS', String(fails));
+    if (fails === 4) notifyAdmin_('空室業務ダッシュボード：Asanaからデータを取得できません', '1時間以上、取得に失敗しています。画面は最後に取得したデータで表示を続けています。\n\n' + e.message, 'refresh');
+    return;
+  }
+  PropertiesService.getScriptProperties().setProperty('STATUS_FAILS', '0');
+}
+
+function setStatus_(kind, text) {
+  const pr = PropertiesService.getScriptProperties();
+  if (kind === 'ok') pr.setProperty('STATUS_LAST_OK', new Date().toISOString());
+  else pr.setProperties({STATUS_LAST_ERROR: new Date().toISOString() + ' ' + String(text).slice(0, 300)});
+}
+
+/* 「最後に正常に取得したデータ」をスクリプトプロパティに分割保存（1値9KBまで） */
+function persistPut_(prefix, text) {
+  const pr = PropertiesService.getScriptProperties();
+  const size = 8000, parts = {};
+  const n = Math.ceil(text.length / size);
+  for (let i = 0; i < n; i++) parts['X_' + prefix + '_' + i] = text.slice(i * size, (i + 1) * size);
+  const oldN = Number(pr.getProperty('X_' + prefix + '_n') || 0);
+  parts['X_' + prefix + '_n'] = String(n);
+  pr.setProperties(parts);
+  for (let i = n; i < oldN; i++) pr.deleteProperty('X_' + prefix + '_' + i);
+}
+
+function persistGet_(prefix) {
+  const all = PropertiesService.getScriptProperties().getProperties();
+  const n = Number(all['X_' + prefix + '_n'] || 0);
+  if (!n) return null;
+  let out = '';
+  for (let i = 0; i < n; i++) { if (all['X_' + prefix + '_' + i] == null) return null; out += all['X_' + prefix + '_' + i]; }
+  return out;
 }
 
 function dailyJob() {
   const errors = [];
   try { asanaGet_('/users/me', {opt_fields: 'name'}); } catch (e) { errors.push('Asana接続：' + e.message); }
+  const lastOk = PropertiesService.getScriptProperties().getProperty('STATUS_LAST_OK');
+  if (!lastOk || Date.now() - new Date(lastOk).getTime() > 6 * 3600 * 1000) errors.push('空室データの更新が6時間以上止まっています（最終成功：' + (lastOk || 'なし') + '）。installTriggers を実行済みか確認してください');
+  if (!ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'refreshJob')) errors.push('15分ごとの自動更新が登録されていません（installTriggers を実行）');
   if (PropertiesService.getScriptProperties().getProperty('MS_CLIENT_ID')) {
     try { importManagementFromMeetingDoc(); } catch (e) { errors.push('管理戸数の自動取得：' + e.message); }
   }
@@ -730,9 +846,15 @@ function dailyJob() {
   if (errors.length) notifyAdmin_('空室業務ダッシュボード：要確認', errors.join('\n'));
 }
 
-function notifyAdmin_(subject, body) {
-  const to = PropertiesService.getScriptProperties().getProperty('ALERT_EMAIL');
+function notifyAdmin_(subject, body, throttleKey) {
+  const pr = PropertiesService.getScriptProperties();
+  const to = pr.getProperty('ALERT_EMAIL');
   if (!to) return;
+  if (throttleKey) { // 同じ種類の通知は6時間に1回まで
+    const k = 'ALERTED_' + throttleKey, last = pr.getProperty(k);
+    if (last && Date.now() - new Date(last).getTime() < 6 * 3600 * 1000) return;
+    pr.setProperty(k, new Date().toISOString());
+  }
   try { MailApp.sendEmail(to, subject, body + '\n\n（空室業務ダッシュボード GAS から自動送信）'); } catch (e) { Logger.log('通知を送れませんでした：' + e.message); }
 }
 
@@ -748,15 +870,32 @@ function asanaFetch_(method, path, params, payload) {
   const qs = params ? '?' + Object.keys(params).map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k])).join('&') : '';
   const opt = {method: method, headers: {Authorization: 'Bearer ' + asanaToken_()}, muteHttpExceptions: true};
   if (payload) { opt.contentType = 'application/json'; opt.payload = JSON.stringify(payload); }
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const res = UrlFetchApp.fetch('https://app.asana.com/api/1.0' + path + qs, opt);
+  let lastError = '';
+  // 混雑（429）・Asana側の障害（5xx）・通信エラーは、間隔をあけて最大4回やり直す
+  for (let attempt = 0; attempt < 4; attempt++) {
+    let res;
+    try { res = UrlFetchApp.fetch('https://app.asana.com/api/1.0' + path + qs, opt); }
+    catch (e) { lastError = '通信エラー：' + e.message; Utilities.sleep(1000 * Math.pow(2, attempt)); continue; }
     const code = res.getResponseCode();
-    if (code === 429) { Utilities.sleep(1500 * (attempt + 1)); continue; }
-    const body = JSON.parse(res.getContentText() || '{}');
-    if (code >= 300) throw new Error('Asana ' + code + ': ' + ((body.errors && body.errors[0] && body.errors[0].message) || ''));
+    if (code === 429 || code >= 500) {
+      lastError = 'Asana ' + code;
+      const wait = Number((res.getHeaders() || {})['Retry-After']) * 1000 || 1000 * Math.pow(2, attempt);
+      Utilities.sleep(Math.min(wait, 15000));
+      continue;
+    }
+    let body = {};
+    try { body = JSON.parse(res.getContentText() || '{}'); } catch (_) {}
+    if (code >= 300) {
+      const e = new Error('Asana ' + code + ': ' + ((body.errors && body.errors[0] && body.errors[0].message) || ''));
+      e.retryable = code === 401 || code === 403 ? false : code >= 500;
+      if (code === 401) notifyAdmin_('空室業務ダッシュボード：Asanaトークンが無効です', 'ASANA_TOKEN を発行し直して差し替えてください。', 'token');
+      throw e;
+    }
     return body;
   }
-  throw new Error('Asanaが混み合っています。少し待って再度お試しください');
+  const e = new Error('Asanaに接続できませんでした（' + lastError + '）。時間をおいて自動で再送します');
+  e.retryable = true;
+  throw e;
 }
 
 function asanaUpload_(parentGid, base64, name) {
