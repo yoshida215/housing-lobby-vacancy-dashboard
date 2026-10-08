@@ -1013,8 +1013,9 @@ function reportData_(body) {
   const applied = inquiry.filter(x => x.result === '申込');
   const people = {}; inquiry.forEach(x => { people[x.name] = true; });
   const byMonth = count(inquiry, x => x.due.slice(0, 7));
+  const vac = vacancyListInfo_(prop, room);
   const moveOut = parseJpDate_(f[CFG.moveOutField]);
-  const vacantDays = moveOut ? Math.max(0, Math.round((new Date(to) - new Date(moveOut)) / 86400000)) : null;
+  const vacantDays = moveOut && moveOut <= to ? Math.round((new Date(to) - new Date(moveOut)) / 86400000) : null; // 退去前は空室期間なし
   return {
     generatedAt: new Date().toISOString(), from: from, to: to, months: months,
     property: prop, room: room, area: f[CFG.fields.a] || null, management: f[CFG.fields.m] || null,
@@ -1023,6 +1024,69 @@ function reportData_(body) {
     viewed: viewed.length, applied: applied.length,
     byType: count(inquiry, x => x.type), bySource: count(inquiry, x => x.source),
     byResult: count(inquiry, x => x.result), byMonth: byMonth,
-    brokerVisits: mine.filter(x => x.type === '仲介同行').length
+    brokerVisits: mine.filter(x => x.type === '仲介同行').length,
+    rent: f['1200978990082563'] || (vac && vac.rent) || null,
+    layout: vac ? vac.layout : null,
+    similar: vac ? vac.similar : [],
+    market: marketComps_(body.address || (vac && vac.addr), vac && vac.layout)
   };
+}
+
+
+/* ---------- 近隣相場（長崎市内の成約事例。スクリプトプロパティ CONTRACT_SHEET_ID のシートを読む） ---------- */
+
+function townOf_(address) {
+  const a = String(address || '').normalize('NFKC').replace(/\s+/g, '');
+  if (a.indexOf('長崎市') < 0) return null;
+  const m = a.match(/長崎市(.+?)(?:[0-9]+丁目|[0-9]|$)/);
+  return m ? m[1] : null;
+}
+
+function marketComps_(address, layout) {
+  const town = townOf_(address);
+  if (!town) return null;
+  const id = PropertiesService.getScriptProperties().getProperty('CONTRACT_SHEET_ID');
+  if (!id) return {town: town, error: '成約事例シートが未設定です'};
+  let values;
+  try { values = SpreadsheetApp.openById(id).getSheets()[0].getDataRange().getValues(); }
+  catch (e) { return {town: town, error: '成約事例シートを読めません'}; }
+  const rows = values.slice(1).map(r => ({
+    name: String(r[1] || ''), addr: String(r[2] || '').normalize('NFKC'), layout: String(r[3] || ''),
+    rent: Number(r[4]), built: String(r[5] || ''), date: r[6] instanceof Date ? Utilities.formatDate(r[6], 'Asia/Tokyo', 'yyyy/MM/dd') : String(r[6] || '')
+  })).filter(x => x.rent > 0 && x.addr.indexOf('長崎市' + town) >= 0);
+  if (!rows.length) return {town: town, count: 0};
+  const med = a => { const b = a.slice().sort((x, y) => x - y); const n = b.length; return n % 2 ? b[(n - 1) / 2] : (b[n / 2 - 1] + b[n / 2]) / 2; };
+  const layouts = {};
+  rows.forEach(x => { (layouts[x.layout || '不明'] = layouts[x.layout || '不明'] || []).push(x.rent); });
+  const byLayout = Object.keys(layouts).map(k => ({layout: k, count: layouts[k].length, median: med(layouts[k]), min: Math.min.apply(null, layouts[k]), max: Math.max.apply(null, layouts[k])}))
+    .sort((a, b) => b.count - a.count);
+  const recent = rows.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5)
+    .map(x => ({name: x.name.replace(/[0-9０-９]{3,4}$/, ''), layout: x.layout, rent: x.rent, built: x.built, date: x.date}));
+  const same = layout ? rows.filter(x => x.layout === layout).map(x => x.rent) : [];
+  return {town: town, count: rows.length, median: med(rows.map(x => x.rent)), byLayout: byLayout, recent: recent,
+    sameLayout: same.length ? {layout: layout, count: same.length, median: med(same), min: Math.min.apply(null, same), max: Math.max.apply(null, same)} : null};
+}
+
+
+// 長期空室リスト（スクリプトプロパティ LIST_SHEET_ID）から、その部屋の間取り・賃料・住所・類似成約を読む。該当しなければ null
+function vacancyListInfo_(prop, room) {
+  const id = PropertiesService.getScriptProperties().getProperty('LIST_SHEET_ID');
+  if (!id) return null;
+  try {
+    const sh = SpreadsheetApp.openById(id).getSheetByName('長期空室一覧');
+    if (!sh) return null;
+    const v = sh.getDataRange().getValues();
+    const hi = v.findIndex(r => r[0] === 'No.');
+    if (hi < 0) return null;
+    const pk = normKey_(prop), rk = normKey_(room);
+    for (let i = hi + 1; i < v.length; i++) {
+      const r = v[i];
+      if (normKey_(r[2]) === pk && normKey_(r[3]) === rk) {
+        const rent = Number(String(r[10]).replace(/[^0-9]/g, ''));
+        return {addr: String(r[8] || ''), layout: String(r[9] || ''), rent: rent ? rent / 10000 + '万円' : null,
+          similar: [r[18], r[19], r[20]].map(x => String(x || '')).filter(Boolean)};
+      }
+    }
+  } catch (e) {}
+  return null;
 }
