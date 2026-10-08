@@ -1,61 +1,7 @@
 <!doctype html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#102841">
-  <meta name="description" content="部屋ごとの巡回チェックと次回巡回予定">
-  <title>部屋別巡回｜空室業務ダッシュボード</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='13' fill='%23102841'/%3E%3Cpath d='M12 31 32 14l20 17v21H12z' fill='none' stroke='%23f4bb61' stroke-width='5' stroke-linejoin='round'/%3E%3Cpath d='M26 52V36h12v16' fill='none' stroke='%23f4bb61' stroke-width='5'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="styles.css?v=20261008auth">
-  <link rel="stylesheet" href="room-location.css?v=20261002">
-  <script defer src="vendor/msal-browser-2.38.3.min.js"></script>
-  <script defer src="config.js?v=20261008auth"></script>
-  <script defer src="auth.js?v=20261008auth"></script>
-  <script defer src="snapshot-current.js?v=20261008auth"></script>
-  <script defer src="patrol-store.js?v=20261002"></script>
-  <script defer src="patrol-items.js?v=20261002"></script>
-  <script defer src="api.js?v=20261008auth"></script>
-  <script defer src="outbox.js?v=20261008auth"></script>
-  <script defer src="outbox-bar.js?v=20261008auth"></script>
-  <script defer src="room.js?v=20261008auth"></script>
-</head>
-<body>
-  <header class="masthead"><div class="masthead-inner"><div class="brand"><span class="brand-mark">H</span><span>空室業務ダッシュボード</span><span class="prototype-pill">ハウジングロビー</span></div><div class="asof" id="asof"></div></div></header>
-  <div class="outbox-bar" id="outbox-bar" hidden></div>
-  <main class="shell room-shell">
-    <a class="back-link" href="index.html#patrol">← 巡回一覧に戻る</a>
-    <div id="room-not-found" class="panel" hidden><h1>部屋が見つかりません</h1><p>一覧から部屋を選び直してください。</p></div>
-    <div id="room-content" hidden>
-      <div class="section-heading"><div><p class="eyebrow">ROOM PATROL</p><h1 id="room-name"></h1><p class="room-subline" id="room-meta"></p></div><div class="head-actions"><span id="lp-box" class="lp-box"><button type="button" id="lp-button" class="secondary-button">物件紹介LPを作成</button><span id="lp-state" class="lp-state" role="status"></span></span><a id="report-link" class="primary-button report-button" href="#">反響レポート作成</a><a id="asana-link" target="_blank" rel="noopener noreferrer">Asanaで確認 ↗</a></div></div>
-      <section class="room-location" aria-labelledby="location-title">
-        <div class="location-details"><h2 id="location-title">所在地</h2><p id="room-address"></p><p class="location-help" id="location-help"></p></div>
-        <a id="route-link" class="route-button" target="_blank" rel="noopener noreferrer" hidden>Googleマップでルート検索</a>
-      </section>
-      <div class="two-metrics"><div class="metric-line room-metric"><span>前回巡回</span><strong id="last-patrol">未登録</strong></div><div class="metric-line room-metric"><span>次回巡回予定</span><strong id="next-patrol">未設定</strong></div></div>
-      <div class="notice" id="sibling-note" hidden></div>
-      <div class="notice subtle" id="staging-source"></div>
-      <div class="room-grid">
-        <section class="panel"><div class="panel-heading"><h2>巡回内容を登録</h2><span>各項目の有無をチェック</span></div>
-          <form id="room-form" class="patrol-form">
-            <label>巡回日<input id="visit-date" type="date" required></label>
-            <p class="next-preview">登録後の次回巡回予定：<strong id="next-preview">—</strong>（45日後）</p>
-            <label>鍵種別<select id="key-type"><option value="">（変更しない）</option></select></label>
-            <fieldset class="check-grid" id="check-grid"><legend>現地確認（チェック＝問題なし／チェックなし＝対応タスクを作成）</legend></fieldset>
-            <div class="photo-block general"><span class="photo-label">その他不備（写真またはコメントがあると「その他不備」タスクを作成）</span><textarea id="other-issue" rows="3" maxlength="1000" placeholder="例：玄関ドアに傷、浴室の換気扇から異音 など"></textarea><label class="photo-button">📷 その他の写真を追加<input type="file" id="photo-general" accept="image/*" multiple></label><div class="photo-thumbs" id="thumbs-general"></div></div>
-            <label>確認メモ<textarea id="visit-note" rows="4" maxlength="1000" placeholder="補充・撤去・次回確認事項など"></textarea></label>
-            <div class="shared-only"><label>担当者名<input id="inspector" type="text" maxlength="30" autocomplete="name" placeholder="例：細田"></label></div>
-            <div class="shared-only"><label>巡回登録の合言葉<input id="passcode" type="password" autocomplete="off"></label></div>
-            <button type="submit" class="primary-button" id="submit-button">確認画面へ</button>
-            <div id="preview" hidden><p class="next-preview">Asanaの物件タスクに「巡回確認（日付）」サブタスクを作り、次の内容を登録します。チェックのない項目（ステージング以外）は、その中に設置タスクを作ります。</p><div class="preview-box" id="preview-text"></div><div class="button-row"><button type="button" class="primary-button" id="confirm-button">この内容でAsanaに登録</button><button type="button" class="secondary-button" id="cancel-button">修正する</button></div></div>
-            <p id="save-message" role="status" class="save-message"></p>
-          </form>
-        </section>
-        <section class="panel"><div class="panel-heading"><h2>最新の確認状態</h2></div><div id="latest-checks" class="check-summary"></div><div id="local-records" class="local-records" hidden></div></section>
-      </div>
-      <section class="panel"><div class="panel-heading"><h2>この部屋の巡回履歴</h2><span id="history-count"></span></div><div class="filters"><label>開始日<input id="history-from" type="date"></label><label>終了日<input id="history-to" type="date"></label><label>確認項目<select id="history-check"><option value="all">すべて</option></select></label><label class="search-field">メモ検索<input id="history-query" type="search" placeholder="メモの語句で検索"></label></div><div class="table-scroll"><table class="list-table"><thead><tr><th>巡回日</th><th>次回予定</th><th>要対応の項目</th><th>鍵種別</th><th>写真</th><th>担当</th><th>メモ</th></tr></thead><tbody id="history-body"></tbody></table></div></section>
-      <p class="footnote">Asanaの「ステージング完了」は存在の根拠として表示します。Asanaに記載がない場合は「未確認」であり、「なし」とは判定しません。<span id="storage-note">巡回記録はAsanaの空室タスクにコメントとして保存され、全員に共有されます。</span></p>
-    </div>
-  </main>
-</body>
-</html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>移転しました｜空室業務ダッシュボード</title>
+<meta http-equiv="refresh" content="0; url=https://housinglobby.github.io/housing-lobby-vacancy-dashboard/room.html">
+<script>location.replace('https://housinglobby.github.io/housing-lobby-vacancy-dashboard/room.html' + location.search);</script>
+<style>body{font-family:-apple-system,"Hiragino Kaku Gothic ProN",sans-serif;padding:32px;color:#152b3f;background:#f3f6f8}</style>
+</head><body><p>空室業務ダッシュボードは移転しました。自動で移動しない場合は <a href="https://housinglobby.github.io/housing-lobby-vacancy-dashboard/room.html">こちら</a> を開いてください。</p></body></html>
