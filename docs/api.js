@@ -65,6 +65,7 @@
       if (!apiUrl) return Promise.reject(new Error('共有データに接続していません'));
       return request({action: 'promotion', month, ...(refresh ? {refresh: '1'} : {})});
     },
+    reportData: body => request(null, {action: 'reportData', ...body}, 120000),
     previewPatrol: body => request(null, {action: 'previewPatrol', ...body}),
     savePatrol: body => request(null, {action: 'savePatrol', ...body}),
     setManagement: body => request(null, {action: 'setManagement', ...body}),

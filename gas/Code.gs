@@ -101,6 +101,7 @@ function doPost(e) {
       case 'previewPatrol': return json_(previewPatrol_(body));
       case 'savePatrol': return json_(savePatrol_(body));
       case 'setManagement': return json_(setManagement_(body));
+      case 'reportData': return json_(reportData_(body));
       case 'checkPasscode': return json_({ok: passOk_('EDIT_PASSCODE', body.passcode)});
       default: return json_({error: '不明な操作です'});
     }
@@ -968,4 +969,56 @@ function cacheGet_(cache, key) {
   const got = cache.getAll(keys);
   if (Object.keys(got).length !== n) return null;
   return keys.map(k => got[k]).join('');
+}
+
+
+/* ---------- 反響レポート（部屋ページのボタンから。氏名は返さず件数のみ） ---------- */
+
+function normKey_(v) { return String(v == null ? '' : v).normalize('NFKC').replace(/[\s・･.．\-‐‑–—－_（）()]+/g, '').toLowerCase(); }
+
+function reportData_(body) {
+  if (!passOk_('EDIT_PASSCODE', body.passcode)) throw new Error('合言葉が違います');
+  const task = asanaGet_('/tasks/' + encodeURIComponent(body.task), {opt_fields: 'name,memberships.project.gid,custom_fields.gid,custom_fields.display_value'});
+  assertInProject_(task);
+  const f = {};
+  (task.custom_fields || []).forEach(x => { f[x.gid] = x.display_value; });
+  const prop = f[CFG.fields.p] || task.name || '';
+  const room = f[CFG.fields.r] || '';
+  const months = Math.min(Number(body.months) || 3, 6);
+  const to = todayJst_();
+  const from = Utilities.formatDate(new Date(Date.now() - months * 31 * 86400000), 'Asia/Tokyo', 'yyyy-MM-dd');
+  const sv = CFG.selfViewing;
+  const rows = asanaList_('/tasks', {project: sv.project, opt_fields: 'name,due_on,custom_fields.gid,custom_fields.display_value', limit: 100});
+  const key = normKey_(prop);
+  const roomKey = normKey_(room);
+  const mine = [];
+  rows.forEach(t => {
+    if (!t.due_on || t.due_on < from || t.due_on > to) return;
+    const g = {};
+    (t.custom_fields || []).forEach(x => { g[x.gid] = x.display_value; });
+    if (normKey_(g[CFG.fields.p]) !== key) return;
+    const rooms = String(g[CFG.fields.r] || '').normalize('NFKC').split(/[・,、\s]+/).filter(Boolean);
+    mine.push({
+      name: t.name, due: t.due_on, type: g[sv.type] || '未設定', source: g[sv.source] || '未設定',
+      result: g[sv.result] || '未設定', thisRoom: !roomKey || rooms.some(x => normKey_(x) === roomKey)
+    });
+  });
+  const count = (list, fn) => { const o = {}; list.forEach(x => { const k = fn(x); o[k] = (o[k] || 0) + 1; }); return o; };
+  const inquiry = mine.filter(x => x.type === '反響' || x.type === 'かってに内見');
+  const viewed = inquiry.filter(x => x.result === '内見のみ' || x.result === '申込');
+  const applied = inquiry.filter(x => x.result === '申込');
+  const people = {}; inquiry.forEach(x => { people[x.name] = true; });
+  const byMonth = count(inquiry, x => x.due.slice(0, 7));
+  const moveOut = parseJpDate_(f[CFG.moveOutField]);
+  const vacantDays = moveOut ? Math.max(0, Math.round((new Date(to) - new Date(moveOut)) / 86400000)) : null;
+  return {
+    generatedAt: new Date().toISOString(), from: from, to: to, months: months,
+    property: prop, room: room, area: f[CFG.fields.a] || null, management: f[CFG.fields.m] || null,
+    status: f[CFG.fields.s] || null, condition: f[CFG.fields.c] || null, moveOut: moveOut, vacantDays: vacantDays,
+    total: inquiry.length, people: Object.keys(people).length, thisRoom: inquiry.filter(x => x.thisRoom).length,
+    viewed: viewed.length, applied: applied.length,
+    byType: count(inquiry, x => x.type), bySource: count(inquiry, x => x.source),
+    byResult: count(inquiry, x => x.result), byMonth: byMonth,
+    brokerVisits: mine.filter(x => x.type === '仲介同行').length
+  };
 }

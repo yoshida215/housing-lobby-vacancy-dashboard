@@ -17,6 +17,7 @@
   el('room-content').hidden = false;
   el('room-name').textContent = `${room.p || '物件名なし'} ${room.r || '号室なし'}`;
   el('room-meta').textContent = `${room.a || '地区なし'} ／ ${room.m || '管理種別なし'} ／ ${room.s || '状態なし'}`;
+  el('report-link').href = `report.html?id=${encodeURIComponent(room.id)}`;
   el('asana-link').href = `https://app.asana.com/0/1201255767385595/${encodeURIComponent(room.id)}`;
   // 同じ物件・号室のタスクが【募集中】に複数ある場合は知らせる（登録先の取り違え防止）
   const norm = v => String(v ?? '').normalize('NFKC').replace(/\s+/g, '');

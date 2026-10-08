@@ -7,3 +7,5 @@
 .route-button:hover{background:#174b6c}
 .route-button[hidden]{display:none}
 @media(max-width:700px){.room-location{align-items:stretch;flex-direction:column;gap:16px;padding:18px}.route-button{width:100%;white-space:normal;text-align:center}}
+
+.head-actions{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.report-button{text-decoration:none;display:inline-block}
