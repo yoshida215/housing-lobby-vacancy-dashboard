@@ -9,22 +9,25 @@
   };
   // エラーには retryable を付ける（true＝通信・Asanaの一時的な問題で、あとで自動再送してよい）
   const fail = (message, retryable) => { const e = new Error(message); e.retryable = retryable; return e; };
-  const request = async (params, body, timeoutMs = 90000) => {
-    const url = new URL(apiUrl);
-    if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+  // すべてPOST。社内ログインのトークンは本文に入れる（ヘッダーに付けるとGASがCORSの事前確認に応えられない。URLにも載せない）
+  const request = async (params, body, timeoutMs = 90000, {interactive = true} = {}) => {
+    const payload = {...(params || {}), ...(body || {})};
+    if (window.Auth) payload.token = await window.Auth.token({interactive});
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     let res;
     try {
-      res = await fetch(url.href, body
-        ? {method: 'POST', headers: {'Content-Type': 'text/plain;charset=utf-8'}, body: JSON.stringify(body), signal: ctrl.signal}
-        : {method: 'GET', signal: ctrl.signal});
+      res = await fetch(apiUrl, {method: 'POST', headers: {'Content-Type': 'text/plain;charset=utf-8'}, body: JSON.stringify(payload), signal: ctrl.signal});
     } catch (err) {
       throw fail(err.name === 'AbortError' ? '応答がありません（時間切れ）' : '通信できません（電波・ネット接続を確認してください）', true);
     } finally { clearTimeout(timer); }
     if (!res.ok) throw fail(`通信エラー（${res.status}）`, res.status >= 500 || res.status === 429);
     let data;
     try { data = await res.json(); } catch { throw fail('サーバーの応答を読み取れません', true); }
+    if (data.auth && window.Auth) {
+      if (interactive) { await window.Auth.login(); return new Promise(() => {}); }
+      throw fail(data.error, true); // 送信待ちは、ログインし直したあとに再送する
+    }
     if (data.error) throw fail(data.error, Boolean(data.retryable));
     return data;
   };
@@ -60,7 +63,7 @@
       }
     },
     patrols: task => request({action: 'patrols', task}),
-    status: () => request({action: 'ping'}),
+    status: () => request({action: 'status'}),
     promotion: (month, refresh) => {
       if (!apiUrl) return Promise.reject(new Error('共有データに接続していません'));
       return request({action: 'promotion', month, ...(refresh ? {refresh: '1'} : {})});
@@ -69,7 +72,7 @@
     lpStatus: task => request({action: 'lpStatus', task}),
     lpRequest: body => request(null, {action: 'lpRequest', ...body}),
     previewPatrol: body => request(null, {action: 'previewPatrol', ...body}),
-    savePatrol: body => request(null, {action: 'savePatrol', ...body}),
+    savePatrol: (body, opts) => request(null, {action: 'savePatrol', ...body}, 90000, opts),
     setManagement: body => request(null, {action: 'setManagement', ...body}),
     newId: () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`)
   };

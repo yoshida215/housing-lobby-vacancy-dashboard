@@ -10,6 +10,7 @@
   // 端末登録用リンク（…#key=合言葉）を開いたら、この端末に合言葉を保存してURLから消す
   const keyHash = location.hash.match(/key=([^&]+)/);
   if (keyHash) { api.prefs.set({passcode: decodeURIComponent(keyHash[1])}); history.replaceState(null, '', location.pathname + location.search); }
+  if (window.Auth) await window.Auth.ready; // 社内アカウントでログインしてから表示
   const data = await api.snapshot();
   const room = data.vacancies.find(row => row.id === id);
   el('asof').textContent = `Asana取得 ${new Intl.DateTimeFormat('ja-JP',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(data.asOf))}${data.live ? '' : '（固定データ）'}`;
@@ -56,7 +57,8 @@
     el('sibling-note').innerHTML = `この部屋にはAsanaのタスクが他にもあります。登録先を確認してください：${siblings.map(row => `<a href="room.html?id=${encodeURIComponent(row.id)}">${esc(row.s || '状態なし')}${row.c ? `・${esc(row.c)}` : ''}のタスク</a>`).join('、')}（このページは「${esc(room.s || '状態なし')}${room.c ? `・${esc(room.c)}` : ''}」のタスク）`;
   }
   const propertyKey = String(room.p || '').normalize('NFKC').replace(/[\s・･.．\-‐‑–—－_（）()]+/g,'').toLowerCase();
-  const propertyLocation = window.HOUSING_ADDRESSES?.properties[`${propertyKey}|${room.a || ''}`];
+  const addressBook = data.addresses || window.HOUSING_ADDRESSES; // 住所はGASから（ログイン後のみ）
+  const propertyLocation = addressBook?.properties?.[`${propertyKey}|${room.a || ''}`];
   el('room-address').textContent = propertyLocation?.address || '住所を確認中';
   el('location-help').textContent = propertyLocation?.address
     ? '車でのルートを開きます。出発地はGoogleマップで変更できます。'
@@ -175,7 +177,7 @@
     items.forEach(item => setValue(item, initialValue(item)));
     Object.keys(photos).forEach(key => {photos[key] = []; renderThumbs(key);});
     const pref = api.prefs.get();
-    el('inspector').value = pref.inspector || '';
+    el('inspector').value = pref.inspector || window.Auth?.account?.name || '';
     el('passcode').value = pref.passcode || '';
     updatePreview();
     refreshCards();

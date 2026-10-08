@@ -37,3 +37,6 @@
 .promo-body{padding:0 4px 14px 24px}.promo-fold.big>summary{padding:4px 0}.promo-fold.big .promo-title{font-size:1.1rem}.promo-fold.big .promo-body{padding:14px 0 0}
 .mini-table td.muted{color:#7a8d9a}
 @media(max-width:620px){.promo-fold>summary{flex-wrap:wrap}.promo-preview{margin-left:20px;text-align:left;white-space:normal;width:100%}}
+
+.auth-user{display:flex;align-items:center;gap:10px;font-size:.8rem;color:#d5e2ec}.auth-user a{color:#f2bd68}
+body.auth-wait main,body.auth-wait .outbox-bar{visibility:hidden}

@@ -1,6 +1,7 @@
 (async () => {
   'use strict';
   const api = window.Api;
+  if (window.Auth) await window.Auth.ready; // 社内アカウントでログインしてから表示
   const el = id => document.getElementById(id);
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const id = new URLSearchParams(location.search).get('id');
@@ -96,7 +97,7 @@
         const room = snap.vacancies.find(r => r.id === id);
         if (room) {
           const key = String(room.p || '').normalize('NFKC').replace(/[\s・･.．\-‐‑–—－_（）()]+/g, '').toLowerCase();
-          address = window.HOUSING_ADDRESSES?.properties[`${key}|${room.a || ''}`]?.address || '';
+          address = (snap.addresses || window.HOUSING_ADDRESSES)?.properties?.[`${key}|${room.a || ''}`]?.address || '';
         }
       } catch {}
       const d = await api.reportData({task: id, months: Number(el('months').value), passcode, address});

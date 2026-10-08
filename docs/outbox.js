@@ -25,12 +25,12 @@
   const remove = async clientId => { await tx('readwrite', store => store.delete(clientId)); notify(); };
   let flushing = false;
   const flush = async () => {
-    if (flushing || !window.Api?.configured || navigator.onLine === false) return;
+    if (flushing || !window.Api?.configured || navigator.onLine === false || (window.Auth && !window.Auth.account)) return;
     flushing = true;
     try {
       for (const item of (await list()).filter(i => !i.stopped)) {
         try {
-          await window.Api.savePatrol(item.body);
+          await window.Api.savePatrol(item.body, {interactive: false});
           await remove(item.clientId);
         } catch (err) {
           await put({...item, tries: (item.tries || 0) + 1, lastError: err.message, stopped: err.retryable === false});

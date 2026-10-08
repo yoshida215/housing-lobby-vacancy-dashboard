@@ -2,6 +2,7 @@
   'use strict';
   const el = id => document.getElementById(id);
   el('data-notice').textContent = 'データを読み込んでいます…';
+  if (window.Auth) await window.Auth.ready; // 社内アカウントでログインしてから表示
   const data = await window.Api.snapshot(new URLSearchParams(location.search).get('refresh') === '1');
   const todayJst = new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
   const currentMonth = todayJst.slice(0, 7);
