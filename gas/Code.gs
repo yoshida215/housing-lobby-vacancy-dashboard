@@ -1028,7 +1028,7 @@ function reportData_(body) {
     rent: f['1200978990082563'] || (vac && vac.rent) || null,
     layout: vac ? vac.layout : null,
     similar: vac ? vac.similar : [],
-    market: marketComps_(body.address || (vac && vac.addr), vac && vac.layout)
+    market: marketComps_(body.address || (vac && vac.addr), vac && vac.layout, rentMan_(f['1200978990082563'] || (vac && vac.rent)))
   };
 }
 
@@ -1042,7 +1042,26 @@ function townOf_(address) {
   return m ? m[1] : null;
 }
 
-function marketComps_(address, layout) {
+const SIMILAR_LAYOUTS = {
+  '1R': ['1K', '1SK'], '1K': ['1R', '1SK', '1DK', '1LDK'], '1SK': ['1R', '1K', '1DK', '1LDK'],
+  '1DK': ['1K', '1LDK', '2K'], '1LDK': ['1DK', '2K', '2DK'], '2K': ['2DK', '1LDK'],
+  '2DK': ['2K', '2LDK'], '2LDK': ['3LDK', '2DK'], '3K': ['3LDK', '2LDK'], '3DK': ['3LDK', '2LDK'],
+  '3LDK': ['2LDK', '4LDK']
+};
+
+function normLayout_(v) {
+  const t = String(v || '').normalize('NFKC').toUpperCase().replace(/\s+/g, '');
+  return /ワンルーム|^1R$/.test(t) ? '1R' : t;
+}
+
+function statsOf_(list) {
+  if (!list.length) return null;
+  const b = list.slice().sort((x, y) => x - y);
+  const q = p => { const i = (b.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i); return b[lo] + (b[hi] - b[lo]) * (i - lo); };
+  return {count: b.length, median: q(0.5), q1: q(0.25), q3: q(0.75), min: b[0], max: b[b.length - 1]};
+}
+
+function marketComps_(address, layout, ownRent) {
   const town = townOf_(address);
   if (!town) return null;
   const id = PropertiesService.getScriptProperties().getProperty('CONTRACT_SHEET_ID');
@@ -1050,23 +1069,37 @@ function marketComps_(address, layout) {
   let values;
   try { values = SpreadsheetApp.openById(id).getSheets()[0].getDataRange().getValues(); }
   catch (e) { return {town: town, error: '成約事例シートを読めません'}; }
-  const rows = values.slice(1).map(r => ({
-    name: String(r[1] || ''), addr: String(r[2] || '').normalize('NFKC'), layout: String(r[3] || ''),
-    rent: Number(r[4]), built: r[5] instanceof Date ? Utilities.formatDate(r[5], 'Asia/Tokyo', 'yyyy/MM') : String(r[5] || ''), date: r[6] instanceof Date ? Utilities.formatDate(r[6], 'Asia/Tokyo', 'yyyy/MM/dd') : String(r[6] || '')
-  })).filter(x => x.rent > 0 && x.addr.indexOf('長崎市' + town) >= 0);
-  if (!rows.length) return {town: town, count: 0};
-  const med = a => { const b = a.slice().sort((x, y) => x - y); const n = b.length; return n % 2 ? b[(n - 1) / 2] : (b[n / 2 - 1] + b[n / 2]) / 2; };
-  const layouts = {};
-  rows.forEach(x => { (layouts[x.layout || '不明'] = layouts[x.layout || '不明'] || []).push(x.rent); });
-  const byLayout = Object.keys(layouts).map(k => ({layout: k, count: layouts[k].length, median: med(layouts[k]), min: Math.min.apply(null, layouts[k]), max: Math.max.apply(null, layouts[k])}))
-    .sort((a, b) => b.count - a.count);
-  const recent = rows.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5)
-    .map(x => ({name: x.name.replace(/[0-9０-９]{3,4}$/, '').replace(/^-$/, '（名称なし）'), layout: x.layout, rent: x.rent, built: x.built, date: x.date}));
-  const same = layout ? rows.filter(x => x.layout === layout).map(x => x.rent) : [];
-  return {town: town, count: rows.length, median: med(rows.map(x => x.rent)), byLayout: byLayout, recent: recent,
-    sameLayout: same.length ? {layout: layout, count: same.length, median: med(same), min: Math.min.apply(null, same), max: Math.max.apply(null, same)} : null};
+  const since = Utilities.formatDate(new Date(Date.now() - 365 * 86400000), 'Asia/Tokyo', 'yyyy/MM/dd');
+  const nowYear = Number(Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy'));
+  const all = values.slice(1).map(r => {
+    const built = r[5] instanceof Date ? Utilities.formatDate(r[5], 'Asia/Tokyo', 'yyyy/MM') : String(r[5] || '');
+    const y = Number((built.match(/^(\d{4})/) || [])[1]);
+    return {
+      name: String(r[1] || '').replace(/[0-9０-９]{3,4}$/, '').replace(/^-$/, '（名称なし）'),
+      addr: String(r[2] || '').normalize('NFKC'), layout: normLayout_(r[3]), rent: Number(r[4]), built: built,
+      age: y ? nowYear - y : null,
+      date: r[6] instanceof Date ? Utilities.formatDate(r[6], 'Asia/Tokyo', 'yyyy/MM/dd') : String(r[6] || '')
+    };
+  }).filter(x => x.rent > 0 && x.addr.indexOf('長崎市') >= 0 && x.date >= since);
+  const lay = normLayout_(layout);
+  const simLayouts = lay ? (SIMILAR_LAYOUTS[lay] || []) : [];
+  const pick = (rows) => ({
+    same: rows.filter(x => lay && x.layout === lay),
+    similar: rows.filter(x => simLayouts.indexOf(x.layout) >= 0)
+  });
+  const inTown = all.filter(x => x.addr.indexOf('長崎市' + town) >= 0);
+  if (!inTown.length && !all.length) return {town: town, count: 0};
+  let scope = 'town', g = pick(inTown);
+  if (lay && g.same.length + g.similar.length < 5) { scope = 'city'; g = pick(all); }
+  const base = lay ? g.same.concat(g.similar) : inTown;
+  if (!base.length) return {town: town, count: inTown.length ? inTown.length : 0, scope: scope, layout: lay || null};
+  const own = Number(ownRent) > 0 ? Number(ownRent) : null;
+  const examples = base.slice().sort((a, b) => own ? Math.abs(a.rent - own) - Math.abs(b.rent - own) : b.date.localeCompare(a.date))
+    .slice(0, 8).map(x => ({name: x.name, layout: x.layout, rent: x.rent, built: x.built, age: x.age, date: x.date, kind: lay && x.layout === lay ? '同じ間取り' : '類似間取り'}));
+  return {town: town, scope: scope, layout: lay || null, similarLayouts: simLayouts, period: '直近12か月',
+    count: base.length, same: statsOf_(g.same.map(x => x.rent)), similar: statsOf_(g.similar.map(x => x.rent)),
+    all: statsOf_(base.map(x => x.rent)), examples: examples};
 }
-
 
 // 長期空室リスト（スクリプトプロパティ LIST_SHEET_ID）から、その部屋の間取り・賃料・住所・類似成約を読む。該当しなければ null
 function vacancyListInfo_(prop, room) {
@@ -1089,4 +1122,9 @@ function vacancyListInfo_(prop, room) {
     }
   } catch (e) {}
   return null;
+}
+
+function rentMan_(v) {
+  const n = parseFloat(String(v || '').replace(/[^0-9.]/g, ''));
+  return n > 0 ? (n > 1000 ? n / 10000 : n) : null;
 }

@@ -9,21 +9,51 @@
   const rows = (obj, total) => Object.entries(obj).sort((a, b) => b[1] - a[1]).map(([k, v]) =>
     `<tr><td>${esc(k)}</td><td>${v}件</td><td>${pct(v, total)}</td><td><span class="bar" style="width:${Math.round(v / (total || 1) * 160)}px"></span></td></tr>`).join('');
   const rentText = v => { const n = parseFloat(String(v || '').replace(/[^0-9.]/g, '')); if (!(n > 0)) return ''; return `${(Math.round((n > 1000 ? n / 10000 : n) * 100) / 100).toFixed(2).replace(/\.?0+$/, '')}万円`; };
-  const man = v => v == null ? '―' : `${(Math.round(v * 100) / 100).toFixed(2)}万円`;
+  const rentNum = v => { const n = parseFloat(String(v || '').replace(/[^0-9.]/g, '')); return n > 0 ? (n > 1000 ? n / 10000 : n) : null; };
+  const man = v => v == null ? '―' : `${(Math.round(v * 100) / 100).toFixed(2).replace(/\.?0+$/, '')}万円`;
+  const gauge = (own, groups) => {
+    const vals = groups.flatMap(g => g.st ? [g.st.min, g.st.max] : []).concat(own ? [own] : []);
+    const lo = Math.floor(Math.min(...vals) * 2) / 2, hi = Math.ceil(Math.max(...vals) * 2) / 2, span = Math.max(hi - lo, 0.5);
+    const pos = v => `${((v - lo) / span * 100).toFixed(1)}%`;
+    return `<div class="gauge">${groups.filter(g => g.st).map(g => `
+      <div class="g-row"><div class="g-label">${esc(g.label)}<small>${g.st.count}件${g.st.count < 5 ? '（参考値）' : ''}</small></div>
+        <div class="g-track">
+          <div class="g-range" style="left:${pos(g.st.min)};width:calc(${pos(g.st.max)} - ${pos(g.st.min)})"></div>
+          <div class="g-iqr ${g.cls}" style="left:${pos(g.st.q1)};width:calc(${pos(g.st.q3)} - ${pos(g.st.q1)})"></div>
+          <div class="g-med" style="left:${pos(g.st.median)}"></div>
+          ${own ? `<div class="g-own" style="left:${pos(own)}"></div>` : ''}
+        </div>
+        <div class="g-num"><strong>${man(g.st.median)}</strong><small>${man(g.st.q1)}〜${man(g.st.q3)}</small></div></div>`).join('')}
+      <div class="g-axis"><span>${lo.toFixed(1)}万</span>${own ? `<span class="own-legend">▼赤線＝この部屋 ${man(own)}</span>` : ''}<span>${hi.toFixed(1)}万</span></div>
+      <p class="sub">濃い帯＝成約の中央半数（四分位）、細い線＝最低〜最高、黒線＝中央値</p></div>`;
+  };
   const marketHtml = d => {
     const m = d.market;
     if (!m) return '';
     if (m.error) return `<h2>近隣相場（${esc(m.town)}周辺の成約事例）</h2><p class="sub">${esc(m.error)}</p>`;
-    if (!m.count) return '';
-    const rentNum = parseFloat(String(d.rent || '').replace(/[^0-9.]/g, ''));
-    const own = rentNum > 0 ? (rentNum > 1000 ? rentNum / 10000 : rentNum) : null;
-    const sl = m.sameLayout;
-    const cmp = own ? `<li>この部屋の賃料${man(own)}は、周辺の成約中央値（${man(m.median)}）より${own >= m.median ? '高め' : '低め'}です（差${man(Math.abs(own - m.median))}）。間取り・築年数が異なるため、下の間取り別も参照してください。</li>` : '';
-    return `<h2>近隣相場（${esc(m.town)}周辺の成約事例）</h2>
-      <ul><li>周辺の成約事例${m.count}件、賃料の中央値${man(m.median)}。</li>${sl ? `<li>同じ間取り（${esc(sl.layout)}）は${sl.count}件、中央値${man(sl.median)}（${man(sl.min)}〜${man(sl.max)}）。</li>` : ''}${cmp}</ul>
-      <table><thead><tr><th>間取り</th><th>件数</th><th>中央値</th><th>最低〜最高</th></tr></thead><tbody>${m.byLayout.map(x => `<tr><td>${esc(x.layout)}</td><td>${x.count}件</td><td>${man(x.median)}</td><td>${man(x.min)}〜${man(x.max)}</td></tr>`).join('')}</tbody></table>
-      <p class="sub" style="margin-top:12px">直近の成約例</p>
-      <table><thead><tr><th>物件</th><th>間取り</th><th>賃料</th><th>築年月</th><th>成約日</th></tr></thead><tbody>${m.recent.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.layout)}</td><td>${man(x.rent)}</td><td>${esc(x.built)}</td><td>${esc(x.date)}</td></tr>`).join('')}</tbody></table>`;
+    if (!m.count || !m.all) return '';
+    const own = rentNum(d.rent);
+    const scopeText = m.scope === 'city' ? `${esc(m.town)}周辺は事例が少ないため、長崎市内全体で比較しています` : `${esc(m.town)}の成約事例`;
+    const key = m.layout ? esc(m.layout) : '';
+    const ref = m.same && m.same.count >= 3 ? m.same : m.all;
+    const refLabel = ref === m.same ? `同じ間取り（${key}）` : `同じ間取り＋類似間取り`;
+    const diff = own ? own - ref.median : null;
+    const verdict = diff == null ? '' : Math.abs(diff) < 0.2
+      ? `この部屋の賃料${man(own)}は、${refLabel}の成約中央値（${man(ref.median)}）とほぼ同水準です。`
+      : `この部屋の賃料${man(own)}は、${refLabel}の成約中央値（${man(ref.median)}）より${man(Math.abs(diff))}${diff > 0 ? '高い' : '低い'}水準です。`;
+    const groups = [];
+    if (m.layout) groups.push({label: `同じ間取り（${key}）`, st: m.same, cls: 'same'});
+    if (m.similarLayouts && m.similarLayouts.length) groups.push({label: `類似間取り（${m.similarLayouts.map(esc).join('・')}）`, st: m.similar, cls: 'similar'});
+    if (!m.layout) groups.push({label: '全間取り', st: m.all, cls: 'same'});
+    return `<h2>近隣相場（${esc(m.period || '')}の成約事例）</h2>
+      <p class="sub">${scopeText}。この部屋は${key || '間取り不明'}${own ? '・' + man(own) : ''}。</p>
+      ${verdict ? `<p class="verdict">${verdict}</p>` : ''}
+      ${gauge(own, groups)}
+      <p class="sub" style="margin-top:14px">賃料が近い成約例</p>
+      <table class="comps"><thead><tr><th>区分</th><th>物件</th><th>間取り</th><th>賃料</th>${own ? '<th>この部屋との差</th>' : ''}<th>築年</th><th>成約日</th></tr></thead><tbody>${m.examples.map(x => {
+        const df = own ? x.rent - own : null;
+        return `<tr class="${x.kind === '同じ間取り' ? 'k-same' : 'k-sim'}"><td><span class="tag">${x.kind === '同じ間取り' ? '同' : '類似'}</span></td><td>${esc(x.name)}</td><td>${esc(x.layout)}</td><td>${man(x.rent)}</td>${own ? `<td class="${df > 0 ? 'up' : df < 0 ? 'down' : ''}">${df > 0 ? '＋' : df < 0 ? '－' : ''}${man(Math.abs(df))}</td>` : ''}<td>${x.age != null ? '築' + x.age + '年' : '―'}</td><td>${esc(x.date)}</td></tr>`;
+      }).join('')}</tbody></table>`;
   };
   const render = d => {
     const fmt = s => s ? s.replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$1年$2月$3日') : '―';
