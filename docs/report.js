@@ -8,6 +8,7 @@
   const pct = (n, d) => d ? `${(n / d * 100).toFixed(1)}%` : '―';
   const rows = (obj, total) => Object.entries(obj).sort((a, b) => b[1] - a[1]).map(([k, v]) =>
     `<tr><td>${esc(k)}</td><td>${v}件</td><td>${pct(v, total)}</td><td><span class="bar" style="width:${Math.round(v / (total || 1) * 160)}px"></span></td></tr>`).join('');
+  const rentText = v => { const n = parseFloat(String(v || '').replace(/[^0-9.]/g, '')); if (!(n > 0)) return ''; return `${(Math.round((n > 1000 ? n / 10000 : n) * 100) / 100).toFixed(2).replace(/\.?0+$/, '')}万円`; };
   const man = v => v == null ? '―' : `${(Math.round(v * 100) / 100).toFixed(2)}万円`;
   const marketHtml = d => {
     const m = d.market;
@@ -35,7 +36,7 @@
         d.brokerVisits ? `仲介業者の同行内見が${d.brokerVisits}件ありました。` : '仲介業者の同行内見の記録はありません（報告漏れがないかも確認します）。'];
     el('report').innerHTML = `
       <h1>${esc(d.property)} ${esc(d.room)}　反響レポート</h1>
-      <p class="sub">${esc(d.area || '')}／${esc(d.management || '')}${d.layout ? '／' + esc(d.layout) : ''}${d.rent ? '／' + esc(d.rent) : ''}　集計期間：${fmt(d.from)}〜${fmt(d.to)}（直近${d.months}か月）　作成日：${fmt(d.to)}</p>
+      <p class="sub">${esc(d.area || '')}／${esc(d.management || '')}${d.layout ? '／' + esc(d.layout) : ''}${rentText(d.rent) ? '／' + rentText(d.rent) : ''}　集計期間：${fmt(d.from)}〜${fmt(d.to)}（直近${d.months}か月）　作成日：${fmt(d.to)}</p>
       <div class="kpi-row">
         <div class="kpi-box"><span>物件への反響</span><strong>${d.total}件</strong></div>
         <div class="kpi-box"><span>内見率</span><strong>${pct(d.viewed, d.total)}</strong></div>
