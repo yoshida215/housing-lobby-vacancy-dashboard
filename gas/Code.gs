@@ -1052,7 +1052,7 @@ function marketComps_(address, layout) {
   catch (e) { return {town: town, error: '成約事例シートを読めません'}; }
   const rows = values.slice(1).map(r => ({
     name: String(r[1] || ''), addr: String(r[2] || '').normalize('NFKC'), layout: String(r[3] || ''),
-    rent: Number(r[4]), built: String(r[5] || ''), date: r[6] instanceof Date ? Utilities.formatDate(r[6], 'Asia/Tokyo', 'yyyy/MM/dd') : String(r[6] || '')
+    rent: Number(r[4]), built: r[5] instanceof Date ? Utilities.formatDate(r[5], 'Asia/Tokyo', 'yyyy/MM') : String(r[5] || ''), date: r[6] instanceof Date ? Utilities.formatDate(r[6], 'Asia/Tokyo', 'yyyy/MM/dd') : String(r[6] || '')
   })).filter(x => x.rent > 0 && x.addr.indexOf('長崎市' + town) >= 0);
   if (!rows.length) return {town: town, count: 0};
   const med = a => { const b = a.slice().sort((x, y) => x - y); const n = b.length; return n % 2 ? b[(n - 1) / 2] : (b[n / 2 - 1] + b[n / 2]) / 2; };
@@ -1061,7 +1061,7 @@ function marketComps_(address, layout) {
   const byLayout = Object.keys(layouts).map(k => ({layout: k, count: layouts[k].length, median: med(layouts[k]), min: Math.min.apply(null, layouts[k]), max: Math.max.apply(null, layouts[k])}))
     .sort((a, b) => b.count - a.count);
   const recent = rows.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5)
-    .map(x => ({name: x.name.replace(/[0-9０-９]{3,4}$/, ''), layout: x.layout, rent: x.rent, built: x.built, date: x.date}));
+    .map(x => ({name: x.name.replace(/[0-9０-９]{3,4}$/, '').replace(/^-$/, '（名称なし）'), layout: x.layout, rent: x.rent, built: x.built, date: x.date}));
   const same = layout ? rows.filter(x => x.layout === layout).map(x => x.rent) : [];
   return {town: town, count: rows.length, median: med(rows.map(x => x.rent)), byLayout: byLayout, recent: recent,
     sameLayout: same.length ? {layout: layout, count: same.length, median: med(same), min: Math.min.apply(null, same), max: Math.max.apply(null, same)} : null};

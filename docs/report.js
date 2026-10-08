@@ -51,7 +51,7 @@
       <h2>月別の反響数</h2>
       <table><thead><tr><th>月</th><th>件数</th><th>構成比</th><th></th></tr></thead><tbody>${rows(d.byMonth, d.total) || '<tr><td colspan="4">記録なし</td></tr>'}</tbody></table>
       ${marketHtml(d)}
-      ${d.similar && d.similar.length ? `<h2>類似する成約事例（賃料・間取りが近いもの）</h2><ul>${d.similar.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      ${d.similar && d.similar.length ? `<h2>類似する成約事例（賃料・間取りが近いもの）</h2><ul>${d.similar.map(x => `<li>${esc(x.replace(/^-/, '（物件名なし）'))}</li>`).join('')}</ul>` : ''}
       <h2>状況と今後の対応</h2>
       <ul>${soft.map(t => `<li>${esc(t)}</li>`).join('')}</ul>
       <p class="sub" style="margin-top:22px">※個人名は掲載していません。集計はAsana「セルフ内見予約表」の登録分です（アットホームは登録分のみ）。</p>`;
