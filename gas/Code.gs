@@ -105,6 +105,7 @@ function doPost(e) {
       case 'setManagement': return json_(setManagement_(body));
       case 'lpRequest': return json_(lpRequest_(body));
       case 'lpUpdate': return json_(lpUpdate_(body));
+      case 'marketDebug': return json_(marketDebug_(body));
       case 'reportData': return json_(reportData_(body));
       case 'checkPasscode': return json_({ok: passOk_('EDIT_PASSCODE', body.passcode)});
       default: return json_({error: '不明な操作です'});
@@ -1216,4 +1217,20 @@ function lpUpdate_(body) {
   asanaFetch_('put', '/tasks/' + subtask, null, {data: {notes: lpNotes_(body.state, {url: body.url, message: body.message}), completed: body.state === '完了'}});
   if (body.state !== '作成中') lpQueuePut_(lpQueueGet_().filter(x => x.task !== body.task));
   return {ok: true};
+}
+
+
+// 成約事例シートの中身の点検（件数のみ・個人情報なし）
+function marketDebug_(body) {
+  if (!passOk_('EDIT_PASSCODE', body.passcode)) throw new Error('合言葉が違います');
+  const id = PropertiesService.getScriptProperties().getProperty('CONTRACT_SHEET_ID');
+  if (!id) return {error: 'CONTRACT_SHEET_ID が未設定です'};
+  const ss = SpreadsheetApp.openById(id);
+  return {title: ss.getName(), tabs: ss.getSheets().map(sh => {
+    const v = sh.getDataRange().getValues();
+    const byCity = {};
+    v.slice(1).forEach(r => { const c = cityOfAddr_(r[2]) || '他'; byCity[c] = (byCity[c] || 0) + 1; });
+    return {name: sh.getName(), rows: v.length - 1, header: v[0] ? v[0].slice(0, 8).map(String) : [], byCity: byCity,
+      sampleDate: v[1] ? String(v[1][6]).slice(0, 30) : null};
+  })};
 }
