@@ -79,6 +79,8 @@ function doGet(e) {
     switch (p.action) {
       case 'snapshot': return json_(getSnapshot_(p.refresh === '1'));
       case 'patrols': return json_(getPatrols_(p.task));
+      case 'lpStatus': return json_(lpStatus_(p.task));
+      case 'lpQueue': return json_(lpQueue_(p.key));
       case 'ping': {
         const pr = PropertiesService.getScriptProperties();
         return json_({ok: true, at: new Date().toISOString(), passcodeRequired: Boolean(pr.getProperty('EDIT_PASSCODE')),
@@ -101,6 +103,8 @@ function doPost(e) {
       case 'previewPatrol': return json_(previewPatrol_(body));
       case 'savePatrol': return json_(savePatrol_(body));
       case 'setManagement': return json_(setManagement_(body));
+      case 'lpRequest': return json_(lpRequest_(body));
+      case 'lpUpdate': return json_(lpUpdate_(body));
       case 'reportData': return json_(reportData_(body));
       case 'checkPasscode': return json_({ok: passOk_('EDIT_PASSCODE', body.passcode)});
       default: return json_({error: '不明な操作です'});
@@ -1127,4 +1131,69 @@ function vacancyListInfo_(prop, room) {
 function rentMan_(v) {
   const n = parseFloat(String(v || '').replace(/[^0-9.]/g, ''));
   return n > 0 ? (n > 1000 ? n / 10000 : n) : null;
+}
+
+
+/* ---------- 物件紹介LP作成の依頼（ボタン→待ち行列→Claudeが作成→URLを書き戻す） ---------- */
+// 状態の正本＝物件タスク直下のサブタスク「物件紹介LP」の説明欄（プロパティには書かない）。待ち行列はスクリプトプロパティ LP_QUEUE。
+// スクリプトプロパティ LP_WORKER_KEY：作成側（Claude）が待ち行列を読み書きするための鍵（必須）
+
+const LP_TASK_NAME = '物件紹介LP';
+
+function lpNotes_(state, extra) {
+  return ['状態: ' + state, extra && extra.url ? 'URL: ' + extra.url : '', extra && extra.message ? 'メモ: ' + extra.message : '', '更新: ' + new Date().toISOString()].filter(Boolean).join('\n');
+}
+
+function lpFind_(task) {
+  const subs = asanaGet_('/tasks/' + encodeURIComponent(task) + '/subtasks', {opt_fields: 'name,notes'}) || [];
+  return subs.find(t => t.name === LP_TASK_NAME) || null;
+}
+
+function lpParse_(sub) {
+  if (!sub) return {state: 'none'};
+  const n = sub.notes || '';
+  const state = (n.match(/状態:\s*(\S+)/) || [])[1] || '依頼中';
+  return {state: state, url: (n.match(/URL:\s*(\S+)/) || [])[1] || null, message: (n.match(/メモ:\s*(.+)/) || [])[1] || null, subtask: sub.gid};
+}
+
+function lpQueueGet_() { try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('LP_QUEUE') || '[]'); } catch (_) { return []; } }
+function lpQueuePut_(q) { PropertiesService.getScriptProperties().setProperty('LP_QUEUE', JSON.stringify(q)); }
+
+function lpStatus_(task) { return lpParse_(lpFind_(task)); }
+
+function lpRequest_(body) {
+  if (!passOk_('EDIT_PASSCODE', body.passcode)) throw new Error('合言葉が違います');
+  const task = asanaGet_('/tasks/' + encodeURIComponent(body.task), {opt_fields: 'name,memberships.project.gid,custom_fields.gid,custom_fields.display_value'});
+  assertInProject_(task);
+  const cur = lpParse_(lpFind_(body.task));
+  if (cur.state === '依頼中' || cur.state === '作成中' || cur.state === '完了') return cur;
+  const f = {};
+  (task.custom_fields || []).forEach(x => { f[x.gid] = x.display_value; });
+  const prop = f[CFG.fields.p] || task.name || '', room = f[CFG.fields.r] || '';
+  let sub = cur.subtask ? {gid: cur.subtask} : null;
+  if (sub) asanaFetch_('put', '/tasks/' + sub.gid, null, {data: {notes: lpNotes_('依頼中')}});
+  else sub = asanaPost_('/tasks/' + encodeURIComponent(body.task) + '/subtasks', {data: {name: LP_TASK_NAME, notes: lpNotes_('依頼中')}});
+  const q = lpQueueGet_().filter(x => x.task !== body.task);
+  q.push({task: body.task, subtask: sub.gid, property: prop, room: room, at: new Date().toISOString()});
+  lpQueuePut_(q);
+  return {state: '依頼中', subtask: sub.gid};
+}
+
+function lpWorkerOk_(key) {
+  const expected = PropertiesService.getScriptProperties().getProperty('LP_WORKER_KEY');
+  if (!expected || String(key || '') !== expected) throw new Error('鍵が違います');
+}
+
+function lpQueue_(key) { lpWorkerOk_(key); return {queue: lpQueueGet_()}; }
+
+// 作成側が呼ぶ：state＝作成中／完了／失敗。完了・失敗は待ち行列から外す
+function lpUpdate_(body) {
+  lpWorkerOk_(body.key);
+  if (['作成中', '完了', '失敗'].indexOf(body.state) < 0) throw new Error('状態が不正です');
+  const item = lpQueueGet_().find(x => x.task === body.task);
+  const subtask = (item && item.subtask) || (lpFind_(body.task) || {}).gid;
+  if (!subtask) throw new Error('依頼が見つかりません');
+  asanaFetch_('put', '/tasks/' + subtask, null, {data: {notes: lpNotes_(body.state, {url: body.url, message: body.message}), completed: body.state === '完了'}});
+  if (body.state !== '作成中') lpQueuePut_(lpQueueGet_().filter(x => x.task !== body.task));
+  return {ok: true};
 }

@@ -9,3 +9,5 @@
 @media(max-width:700px){.room-location{align-items:stretch;flex-direction:column;gap:16px;padding:18px}.route-button{width:100%;white-space:normal;text-align:center}}
 
 .head-actions{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.report-button{text-decoration:none;display:inline-block}
+
+.lp-box{display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap}.lp-state{font-size:.85rem;color:#3d5a70}.secondary-button{border:1px solid #1b5d85;background:#fff;color:#1b5d85;border-radius:9px;padding:11px 16px;font-weight:800}.link-button{border:0;background:none;color:#115b8a;text-decoration:underline;padding:0 4px}

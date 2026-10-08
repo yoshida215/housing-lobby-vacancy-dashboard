@@ -18,6 +18,35 @@
   el('room-name').textContent = `${room.p || '物件名なし'} ${room.r || '号室なし'}`;
   el('room-meta').textContent = `${room.a || '地区なし'} ／ ${room.m || '管理種別なし'} ／ ${room.s || '状態なし'}`;
   el('report-link').href = `report.html?id=${encodeURIComponent(room.id)}`;
+  const lp = {box: el('lp-box'), btn: el('lp-button'), msg: el('lp-state')};
+  const lpShow = st => {
+    lp.msg.innerHTML = ''; lp.btn.hidden = false; lp.btn.disabled = false;
+    if (st.state === '完了' && st.url) {
+      lp.btn.hidden = true;
+      lp.msg.innerHTML = `<a href="${esc(st.url)}" target="_blank" rel="noopener noreferrer">物件紹介LPを開く ↗</a> <button type="button" class="link-button" id="lp-copy">URLをコピー</button>`;
+      el('lp-copy').addEventListener('click', async () => { try { await navigator.clipboard.writeText(st.url); el('lp-copy').textContent = 'コピーしました'; } catch { prompt('URLをコピーしてください', st.url); } });
+    } else if (st.state === '依頼中' || st.state === '作成中') {
+      lp.btn.hidden = true; lp.msg.textContent = st.state === '作成中' ? 'LPを作成しています…（数分かかります）' : '作成待ちです（最大5分ほどで作成を始めます）';
+    } else if (st.state === '失敗') {
+      lp.btn.textContent = 'もう一度LPを作成'; lp.msg.textContent = `作成できませんでした：${st.message || '原因不明'}`;
+    } else { lp.btn.textContent = '物件紹介LPを作成'; }
+  };
+  const lpPoll = async () => {
+    try { const st = await api.lpStatus(room.id); lpShow(st); if (st.state === '依頼中' || st.state === '作成中') setTimeout(lpPoll, 20000); }
+    catch (e) { lp.msg.textContent = 'LPの状態を確認できません'; }
+  };
+  if (!shared) lp.box.hidden = true;
+  else {
+    lpPoll();
+    lp.btn.addEventListener('click', async () => {
+      lp.btn.disabled = true; lp.msg.textContent = '依頼しています…';
+      try { lpShow(await api.lpRequest({task: room.id, passcode: api.prefs.get().passcode || ''})); setTimeout(lpPoll, 20000); }
+      catch (e) {
+        lp.btn.disabled = false; lp.msg.textContent = e.message;
+        if (/合言葉/.test(e.message)) { const pc = prompt('巡回登録の合言葉を入力してください'); if (pc) { api.prefs.set({passcode: pc}); lp.btn.click(); } }
+      }
+    });
+  }
   el('asana-link').href = `https://app.asana.com/0/1201255767385595/${encodeURIComponent(room.id)}`;
   // 同じ物件・号室のタスクが【募集中】に複数ある場合は知らせる（登録先の取り違え防止）
   const norm = v => String(v ?? '').normalize('NFKC').replace(/\s+/g, '');
