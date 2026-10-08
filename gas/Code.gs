@@ -13,6 +13,8 @@
  *   ASSIGNEE_NAGASAKI 長崎北・長崎中央・セキスイ・古里のサブタスク担当者（Asanaのメールアドレス）
  *   ASSIGNEE_KENOU    諫早・大村のサブタスク担当者（Asanaのメールアドレス）
  *   ALERT_EMAIL       障害通知の送り先（任意）
+ *   REQUIRE_LOGIN     「1」で社内アカウント（Microsoft Entra ID）のログインを必須にする。未設定なら従来どおり
+ *   ALLOWED_DOMAINS   ログインを許可するメールのドメイン（カンマ区切り。既定：hmao034998.onmicrosoft.com,h-lobby.jp）
  *   MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET  管理戸数の自動取得用（Microsoft Entraのアプリ登録。任意）
  */
 
@@ -72,44 +74,112 @@ const CFG = {
 };
 
 /* ---------- エントリポイント ---------- */
+/* 社内アカウント（Entra ID）での本人確認。画面は公開でも、GASがトークンのない相手を断れば社内限定になる。
+   - 画面は MSAL.js でログインし、Microsoft Graph 用のアクセストークンを POST の本文に入れて送る（ヘッダーだとCORSで失敗する）
+   - GASは Graph /me でトークンの持ち主を確かめ、許可ドメインの社員（ゲスト以外）だけを通す
+   - LP作成の待ち行列（lpQueue / lpUpdate）は Mac 側の自動処理が専用の鍵（LP_WORKER_KEY）で呼ぶため、鍵で確認する */
+
+let CURRENT_USER = null; // 確認済みの利用者（このリクエストの間だけ）
+
+function loginRequired_() { return PropertiesService.getScriptProperties().getProperty('REQUIRE_LOGIN') === '1'; }
+
+function verifyUser_(token) {
+  if (!token || typeof token !== 'string' || token.length < 100) return null;
+  const cache = CacheService.getScriptCache();
+  const key = 'auth_' + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, token)).slice(0, 40);
+  const hit = cache.get(key);
+  if (hit) return hit === 'NG' ? null : JSON.parse(hit);
+  let res;
+  try {
+    res = UrlFetchApp.fetch('https://graph.microsoft.com/v1.0/me?$select=displayName,userPrincipalName,mail,userType', {headers: {Authorization: 'Bearer ' + token}, muteHttpExceptions: true});
+  } catch (e) { const err = new Error('本人確認に失敗しました（通信エラー）'); err.retryable = true; throw err; }
+  const code = res.getResponseCode();
+  if (code >= 500 || code === 429) { const err = new Error('本人確認に失敗しました（Microsoft ' + code + '）'); err.retryable = true; throw err; }
+  if (code !== 200) { cache.put(key, 'NG', 300); return null; }
+  const me = JSON.parse(res.getContentText());
+  const upn = String(me.userPrincipalName || '').toLowerCase();
+  const domains = String(PropertiesService.getScriptProperties().getProperty('ALLOWED_DOMAINS') || 'hmao034998.onmicrosoft.com,h-lobby.jp')
+    .split(',').map(d => d.trim().toLowerCase()).filter(Boolean);
+  // ★Microsoftのトークンとして正しいだけでは足りない。自社ドメインの社員（ゲスト以外）に限る
+  const ok = me.userType !== 'Guest' && upn.indexOf('#ext#') < 0 && domains.some(d => upn.endsWith('@' + d));
+  if (!ok) { cache.put(key, 'NG', 300); return null; }
+  const user = {name: me.displayName || upn, email: upn};
+  cache.put(key, JSON.stringify(user), 600);
+  return user;
+}
+
+const AUTH_ERROR = '社内アカウントでログインしてください';
+
+// 画面から：Content-Type: text/plain の JSON（{action, token, ...}）または フォーム（token, payload）
+function readRequest_(e) {
+  const p = (e && e.parameter) || {};
+  if (p.payload) {
+    const body = JSON.parse(p.payload);
+    body.token = p.token || body.token;
+    return body;
+  }
+  return JSON.parse(e.postData.contents);
+}
+
+// 認証の要らない入口（機械用・稼働確認）
+const OPEN_ACTIONS = {lpQueue: true, lpUpdate: true};
+
+function handle_(action, body) {
+  switch (action) {
+    // 読み取り
+    case 'snapshot': return getSnapshot_(body.refresh === '1' || body.refresh === true);
+    case 'patrols': return getPatrols_(body.task);
+    case 'promotion': return getPromotion_(body.month, body.refresh === '1' || body.refresh === true);
+    case 'lpStatus': return lpStatus_(body.task);
+    case 'status': return statusInfo_();
+    case 'reportData': return reportData_(body);
+    case 'marketDebug': return marketDebug_(body);
+    // 書き込み
+    case 'previewPatrol': return previewPatrol_(body);
+    case 'savePatrol': return savePatrol_(body);
+    case 'setManagement': return setManagement_(body);
+    case 'lpRequest': return lpRequest_(body);
+    case 'checkPasscode': return {ok: passOk_('EDIT_PASSCODE', body.passcode)};
+    // 機械用（専用の鍵で確認）
+    case 'lpQueue': return lpQueue_(body.key);
+    case 'lpUpdate': return lpUpdate_(body);
+    default: throw new Error('不明な操作です');
+  }
+}
+
+function statusInfo_() {
+  const pr = PropertiesService.getScriptProperties();
+  return {ok: true, at: new Date().toISOString(), passcodeRequired: Boolean(pr.getProperty('EDIT_PASSCODE')) && !CURRENT_USER,
+    loginRequired: loginRequired_(), user: CURRENT_USER,
+    lastOk: pr.getProperty('STATUS_LAST_OK'), lastError: pr.getProperty('STATUS_LAST_ERROR'),
+    autoRefresh: ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'refreshJob')};
+}
 
 function doGet(e) {
   const p = (e && e.parameter) || {};
   try {
-    switch (p.action) {
-      case 'snapshot': return json_(getSnapshot_(p.refresh === '1'));
-      case 'patrols': return json_(getPatrols_(p.task));
-      case 'lpStatus': return json_(lpStatus_(p.task));
-      case 'lpQueue': return json_(lpQueue_(p.key));
-      case 'ping': {
-        const pr = PropertiesService.getScriptProperties();
-        return json_({ok: true, at: new Date().toISOString(), passcodeRequired: Boolean(pr.getProperty('EDIT_PASSCODE')),
-          lastOk: pr.getProperty('STATUS_LAST_OK'), lastError: pr.getProperty('STATUS_LAST_ERROR'), autoRefresh: ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'refreshJob')});
-      }
-      case 'promotion': return json_(getPromotion_(p.month, p.refresh === '1'));
-      default: return json_({error: '不明な操作です'});
-    }
+    if (p.action === 'lpQueue') return json_(lpQueue_(p.key));               // 機械用
+    if (p.action === 'ping') return json_({ok: true, loginRequired: loginRequired_()}); // 稼働確認（データなし）
+    // データを返す入口は、ログイン必須の設定ではPOST（本文にトークン）だけにする。URLにトークンを載せない
+    if (loginRequired_()) return json_({error: AUTH_ERROR, auth: true});
+    if (p.action === 'ping_full') return json_(statusInfo_());
+    return json_(handle_(p.action === 'ping' ? 'status' : p.action, p));
   } catch (err) {
     return json_({error: String(err.message || err)});
   }
 }
 
-// 画面からは Content-Type: text/plain で JSON を送る（CORSプリフライト回避）
 function doPost(e) {
   let body;
-  try { body = JSON.parse(e.postData.contents); } catch (_) { return json_({error: '送信内容を読み取れません'}); }
+  try { body = readRequest_(e); } catch (_) { return json_({error: '送信内容を読み取れません'}); }
   try {
-    switch (body.action) {
-      case 'previewPatrol': return json_(previewPatrol_(body));
-      case 'savePatrol': return json_(savePatrol_(body));
-      case 'setManagement': return json_(setManagement_(body));
-      case 'lpRequest': return json_(lpRequest_(body));
-      case 'lpUpdate': return json_(lpUpdate_(body));
-      case 'marketDebug': return json_(marketDebug_(body));
-      case 'reportData': return json_(reportData_(body));
-      case 'checkPasscode': return json_({ok: passOk_('EDIT_PASSCODE', body.passcode)});
-      default: return json_({error: '不明な操作です'});
+    const action = body.action;
+    if (!OPEN_ACTIONS[action]) {
+      CURRENT_USER = verifyUser_(body.token);
+      if (!CURRENT_USER && loginRequired_()) return json_({error: AUTH_ERROR, auth: true});
     }
+    delete body.token;
+    return json_(handle_(action, body));
   } catch (err) {
     // retryable＝通信・Asana側の一時的な問題。画面はこの場合だけ「送信待ち」に保存して自動再送する
     const retryable = Boolean(err.retryable) || /Lock|timeout|タイムアウト|Service invoked too many times|Address unavailable/i.test(String(err.message || err));
@@ -210,6 +280,8 @@ function buildSnapshot_() {
     vacancies: vacancies,
     restorations: restorations,
     rates: computeRates_(vacancies), // 管理戸数そのものは返さない（非公開）。率のみ返す
+    // 物件の住所（公開リポジトリに置かないため、GASの別ファイル Addresses.gs に定義。ログイン後のみ返す）
+    addresses: typeof PROPERTY_ADDRESSES !== 'undefined' ? PROPERTY_ADDRESSES : null,
     keyOptions: keyTypeOptions_().map(o => o.name)
   };
 }
@@ -347,7 +419,7 @@ function validatePatrol_(body) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(body.date || '')) throw new Error('巡回日が正しくありません');
   if (body.date > todayJst_()) throw new Error('巡回日は今日以前の日付にしてください');
   if (!/^[A-Za-z0-9-]{8,48}$/.test(body.clientId || '')) throw new Error('登録IDが正しくありません');
-  const inspector = String(body.inspector || '').trim();
+  const inspector = String(body.inspector || (CURRENT_USER && CURRENT_USER.name) || '').trim();
   if (!inspector) throw new Error('担当者名を入力してください');
   if (inspector.length > 30) throw new Error('担当者名は30文字以内にしてください');
   const note = String(body.note || '').trim();
@@ -391,6 +463,7 @@ function patrolText_(r) {
   if (r.otherIssue) lines.push('その他不備：' + r.otherIssue.replace(/\n/g, ' '));
   if (r.photoCount) lines.push('写真：' + r.photoCount + '枚');
   lines.push('担当：' + r.inspector);
+  if (CURRENT_USER) lines.push('登録者：' + CURRENT_USER.name + '（' + CURRENT_USER.email + '）');
   if (r.note) lines.push('メモ：' + r.note);
   lines.push('（空室業務ダッシュボードから登録・ID:' + r.clientId + '）');
   return lines.join('\n');
@@ -935,7 +1008,7 @@ function asanaList_(path, params) {
 
 function passOk_(key, value) {
   const expected = PropertiesService.getScriptProperties().getProperty(key);
-  if (key === 'EDIT_PASSCODE' && !expected) return true; // 巡回登録は合言葉を空にすると誰でも登録できる
+  if (key === 'EDIT_PASSCODE' && (!expected || CURRENT_USER)) return true; // 社内ログイン済み、または合言葉を空にしているときは不要
   return Boolean(expected) && String(value || '') === expected;
 }
 
