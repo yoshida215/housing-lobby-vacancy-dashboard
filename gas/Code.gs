@@ -996,11 +996,15 @@ function reportData_(body) {
     if (!t.due_on || t.due_on < from || t.due_on > to) return;
     const g = {};
     (t.custom_fields || []).forEach(x => { g[x.gid] = x.display_value; });
-    if (normKey_(g[CFG.fields.p]) !== key) return;
-    const rooms = String(g[CFG.fields.r] || '').normalize('NFKC').split(/[・,、\s]+/).filter(Boolean);
+    const pv = String(g[CFG.fields.p] || '');
+    const parts = pv.split(/[、,，]|(?<=[^\s])・(?=[^\s])/).map(normKey_).filter(Boolean);
+    const exact = normKey_(pv) === key;
+    if (!exact && parts.indexOf(key) < 0) return;
+    const multi = !exact && parts.length > 1;
+    const rooms = multi ? [] : String(g[CFG.fields.r] || '').normalize('NFKC').split(/[・,、\s]+/).filter(Boolean);
     mine.push({
       name: t.name, due: t.due_on, type: g[sv.type] || '未設定', source: g[sv.source] || '未設定',
-      result: g[sv.result] || '未設定', thisRoom: !roomKey || rooms.some(x => normKey_(x) === roomKey)
+      result: g[sv.result] || '未設定', thisRoom: !multi && (!roomKey || rooms.some(x => normKey_(x) === roomKey))
     });
   });
   const count = (list, fn) => { const o = {}; list.forEach(x => { const k = fn(x); o[k] = (o[k] || 0) + 1; }); return o; };
