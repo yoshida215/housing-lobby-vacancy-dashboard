@@ -1039,11 +1039,22 @@ function reportData_(body) {
 
 /* ---------- 近隣相場（長崎市内の成約事例。スクリプトプロパティ CONTRACT_SHEET_ID のシートを読む） ---------- */
 
+const CITY_RE = /(長崎市|諫早市|大村市|時津町|長与町)/;
+
+// 住所 → {city, town}。西彼杵郡の町は郡名を除いた「時津町」「長与町」を市区町とみなす
 function townOf_(address) {
-  const a = String(address || '').normalize('NFKC').replace(/\s+/g, '');
-  if (a.indexOf('長崎市') < 0) return null;
-  const m = a.match(/長崎市(.+?)(?:[0-9]+丁目|[0-9]|$)/);
-  return m ? m[1] : null;
+  const a = String(address || '').normalize('NFKC').replace(/\s+/g, '').replace(/^長崎県/, '').replace(/西彼杵郡/, '');
+  const c = a.match(CITY_RE);
+  if (!c) return null;
+  const rest = a.slice(a.indexOf(c[1]) + c[1].length);
+  const m = rest.match(/^(.+?)(?:[0-9]+丁目|[0-9]|$)/);
+  return m && m[1] ? {city: c[1], town: m[1]} : null;
+}
+
+function cityOfAddr_(addr) {
+  const a = String(addr || '').normalize('NFKC').replace(/西彼杵郡/, '');
+  const c = a.match(CITY_RE);
+  return c ? c[1] : null;
 }
 
 const SIMILAR_LAYOUTS = {
@@ -1066,8 +1077,9 @@ function statsOf_(list) {
 }
 
 function marketComps_(address, layout, ownRent) {
-  const town = townOf_(address);
-  if (!town) return null;
+  const t = townOf_(address);
+  if (!t) return null;
+  const town = t.town;
   const id = PropertiesService.getScriptProperties().getProperty('CONTRACT_SHEET_ID');
   if (!id) return {town: town, error: '成約事例シートが未設定です'};
   let values;
@@ -1084,23 +1096,24 @@ function marketComps_(address, layout, ownRent) {
       age: y ? nowYear - y : null,
       date: r[6] instanceof Date ? Utilities.formatDate(r[6], 'Asia/Tokyo', 'yyyy/MM/dd') : String(r[6] || '')
     };
-  }).filter(x => x.rent > 0 && x.addr.indexOf('長崎市') >= 0 && x.date >= since);
+  }).filter(x => x.rent > 0 && cityOfAddr_(x.addr) !== null && x.date >= since);
   const lay = normLayout_(layout);
   const simLayouts = lay ? (SIMILAR_LAYOUTS[lay] || []) : [];
   const pick = (rows) => ({
     same: rows.filter(x => lay && x.layout === lay),
     similar: rows.filter(x => simLayouts.indexOf(x.layout) >= 0)
   });
-  const inTown = all.filter(x => x.addr.indexOf('長崎市' + town) >= 0);
+  const sameCity = all.filter(x => cityOfAddr_(x.addr) === t.city);
+  const inTown = sameCity.filter(x => x.addr.normalize('NFKC').replace(/西彼杵郡/, '').indexOf(t.city + town) >= 0);
   if (!inTown.length && !all.length) return {town: town, count: 0};
   let scope = 'town', g = pick(inTown);
-  if (lay && g.same.length + g.similar.length < 5) { scope = 'city'; g = pick(all); }
+  if (lay && g.same.length + g.similar.length < 5) { scope = 'city'; g = pick(sameCity); }
   const base = lay ? g.same.concat(g.similar) : inTown;
   if (!base.length) return {town: town, count: inTown.length ? inTown.length : 0, scope: scope, layout: lay || null};
   const own = Number(ownRent) > 0 ? Number(ownRent) : null;
   const examples = base.slice().sort((a, b) => own ? Math.abs(a.rent - own) - Math.abs(b.rent - own) : b.date.localeCompare(a.date))
     .slice(0, 8).map(x => ({name: x.name, layout: x.layout, rent: x.rent, built: x.built, age: x.age, date: x.date, kind: lay && x.layout === lay ? '同じ間取り' : '類似間取り'}));
-  return {town: town, scope: scope, layout: lay || null, similarLayouts: simLayouts, period: '直近12か月',
+  return {town: town, city: t.city, scope: scope, layout: lay || null, similarLayouts: simLayouts, period: '直近12か月',
     count: base.length, same: statsOf_(g.same.map(x => x.rent)), similar: statsOf_(g.similar.map(x => x.rent)),
     all: statsOf_(base.map(x => x.rent)), examples: examples};
 }

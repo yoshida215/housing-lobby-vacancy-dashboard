@@ -33,7 +33,7 @@
     if (m.error) return `<h2>近隣相場（${esc(m.town)}周辺の成約事例）</h2><p class="sub">${esc(m.error)}</p>`;
     if (!m.count || !m.all) return '';
     const own = rentNum(d.rent);
-    const scopeText = m.scope === 'city' ? `${esc(m.town)}周辺は事例が少ないため、長崎市内全体で比較しています` : `${esc(m.town)}の成約事例`;
+    const scopeText = m.scope === 'city' ? `${esc(m.town)}周辺は事例が少ないため、${esc(m.city || '市内')}全体で比較しています` : `${esc(m.town)}の成約事例`;
     const key = m.layout ? esc(m.layout) : '';
     const ref = m.same && m.same.count >= 3 ? m.same : m.all;
     const refLabel = ref === m.same ? `同じ間取り（${key}）` : `同じ間取り＋類似間取り`;
