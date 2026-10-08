@@ -1083,8 +1083,15 @@ function marketComps_(address, layout, ownRent) {
   const id = PropertiesService.getScriptProperties().getProperty('CONTRACT_SHEET_ID');
   if (!id) return {town: town, error: '成約事例シートが未設定です'};
   let values;
-  try { values = SpreadsheetApp.openById(id).getSheets()[0].getDataRange().getValues(); }
-  catch (e) { return {town: town, error: '成約事例シートを読めません'}; }
+  try {
+    // 見出しに「成約日」がある全タブを読む（取り込み時にタブが分かれても拾えるように）
+    values = [];
+    SpreadsheetApp.openById(id).getSheets().forEach(sh => {
+      const v = sh.getDataRange().getValues();
+      if (v.length && v[0].map(String).join('').indexOf('成約日') >= 0) v.slice(1).forEach(r => values.push(r));
+    });
+    values.unshift([]);
+  } catch (e) { return {town: town, error: '成約事例シートを読めません'}; }
   const since = Utilities.formatDate(new Date(Date.now() - 365 * 86400000), 'Asia/Tokyo', 'yyyy/MM/dd');
   const nowYear = Number(Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy'));
   const all = values.slice(1).map(r => {
